@@ -14,6 +14,10 @@ func SetupRoutes(app *fiber.App) {
 	userController := &controllers.UserController{}
 	courseController := &controllers.CourseController{}
 	branchController := &controllers.BranchController{}
+	studentController := &controllers.StudentController{}
+	teacherController := &controllers.TeacherController{}
+	roomController := &controllers.RoomController{}
+	notificationController := &controllers.NotificationController{}
 
 	// API group
 	api := app.Group("/api")
@@ -60,12 +64,47 @@ func SetupRoutes(app *fiber.App) {
 	branches.Put("/:id", middleware.RequireOwnerOrAdmin(), branchController.UpdateBranch)
 	branches.Delete("/:id", middleware.RequireOwnerOrAdmin(), branchController.DeleteBranch)
 
-	// Additional protected endpoints will be added here for:
-	// - Students 
-	// - Teachers
-	// - Rooms
-	// - Notifications
-	// - Activity logs
+	// Student management routes
+	students := protected.Group("/students")
+	students.Get("/", middleware.RequireTeacherOrAbove(), studentController.GetStudents)
+	students.Get("/:id", middleware.RequireTeacherOrAbove(), studentController.GetStudent)
+	students.Post("/", middleware.RequireTeacherOrAbove(), studentController.CreateStudent)
+	students.Put("/:id", middleware.RequireTeacherOrAbove(), studentController.UpdateStudent)
+	students.Delete("/:id", middleware.RequireOwnerOrAdmin(), studentController.DeleteStudent)
+	students.Get("/branch/:branch_id", middleware.RequireTeacherOrAbove(), studentController.GetStudentsByBranch)
+
+	// Teacher management routes
+	teachers := protected.Group("/teachers")
+	teachers.Get("/", middleware.RequireTeacherOrAbove(), teacherController.GetTeachers)
+	teachers.Get("/:id", middleware.RequireTeacherOrAbove(), teacherController.GetTeacher)
+	teachers.Post("/", middleware.RequireOwnerOrAdmin(), teacherController.CreateTeacher)
+	teachers.Put("/:id", middleware.RequireOwnerOrAdmin(), teacherController.UpdateTeacher)
+	teachers.Delete("/:id", middleware.RequireOwnerOrAdmin(), teacherController.DeleteTeacher)
+	teachers.Get("/branch/:branch_id", middleware.RequireTeacherOrAbove(), teacherController.GetTeachersByBranch)
+	teachers.Get("/specializations", teacherController.GetTeacherSpecializations)
+	teachers.Get("/types", teacherController.GetTeacherTypes)
+
+	// Room management routes
+	rooms := protected.Group("/rooms")
+	rooms.Get("/", middleware.RequireTeacherOrAbove(), roomController.GetRooms)
+	rooms.Get("/:id", middleware.RequireTeacherOrAbove(), roomController.GetRoom)
+	rooms.Post("/", middleware.RequireOwnerOrAdmin(), roomController.CreateRoom)
+	rooms.Put("/:id", middleware.RequireOwnerOrAdmin(), roomController.UpdateRoom)
+	rooms.Delete("/:id", middleware.RequireOwnerOrAdmin(), roomController.DeleteRoom)
+	rooms.Get("/branch/:branch_id", middleware.RequireTeacherOrAbove(), roomController.GetRoomsByBranch)
+	rooms.Get("/available", middleware.RequireTeacherOrAbove(), roomController.GetAvailableRooms)
+	rooms.Patch("/:id/status", middleware.RequireTeacherOrAbove(), roomController.UpdateRoomStatus)
+
+	// Notification management routes
+	notifications := protected.Group("/notifications")
+	notifications.Get("/", notificationController.GetNotifications)
+	notifications.Get("/unread-count", notificationController.GetUnreadCount)
+	notifications.Get("/stats", middleware.RequireOwnerOrAdmin(), notificationController.GetNotificationStats)
+	notifications.Get("/:id", notificationController.GetNotification)
+	notifications.Post("/", middleware.RequireOwnerOrAdmin(), notificationController.CreateNotification)
+	notifications.Patch("/:id/read", notificationController.MarkAsRead)
+	notifications.Patch("/mark-all-read", notificationController.MarkAllAsRead)
+	notifications.Delete("/:id", notificationController.DeleteNotification)
 }
 
 // SetupStaticRoutes configures static file serving
