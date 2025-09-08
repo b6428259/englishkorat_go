@@ -146,6 +146,28 @@ type Student struct {
 	User User `json:"user,omitempty" gorm:"foreignKey:UserID"`
 }
 
+type Student_Group struct {
+	BaseModel
+	StudentID uint   `json:"student_id" gorm:"not null"`
+	GroupName string `json:"group_name" gorm:"size:100;not null"`
+	Level     string `json:"level" gorm:"size:50"`
+	Status    string `json:"status" gorm:"size:50;default:'active'"` // active, inactive
+	CourseID  uint   `json:"course_id" gorm:"not null"`
+
+	// Relationships
+	Student Student `json:"student,omitempty" gorm:"foreignKey:StudentID"`
+	Course  Course  `json:"course,omitempty" gorm:"foreignKey:CourseID"`
+}
+
+type User_inCourse struct {
+	BaseModel
+	UserID   uint `json:"user_id" gorm:"not null"`
+	CourseID uint `json:"course_id" gorm:"not null"`
+
+	Role   string `json:"role" gorm:"size:50;not null"`           // instructor, assistant, observer, student, teacher
+	Status string `json:"status" gorm:"size:50;default:'active'"` // active, inactive, enrolled, completed, dropped
+}
+
 // Teacher model
 type Teacher struct {
 	BaseModel
@@ -241,4 +263,59 @@ type LogArchive struct {
 	FileSize    int64     `json:"file_size" gorm:"not null"`
 	Status      string    `json:"status" gorm:"size:50;not null;default:'pending'"` // pending, completed, failed
 	Error       string    `json:"error" gorm:"type:text"`
+}
+
+type Schedule_Sessions struct {
+	ScheduleID            uint      `json:"schedule_id" gorm:"not null"`
+	Session_date          time.Time `json:"session_date" gorm:"not null"`
+	Start_time            time.Time `json:"start_time" gorm:"not null"`
+	End_time              time.Time `json:"end_time" gorm:"not null"`
+	Session_number        int       `json:"session_number" gorm:"not null"`
+	Week_number           int       `json:"week_number" gorm:"not null"`
+	Status                string    `json:"status" gorm:"size:50;default:'scheduled'"` // scheduled, confirmed, pending, completed, cancelled, rescheduled, no-show
+	Cencelling_Reason     string    `json:"cencelling_reason" gorm:"type:text"`
+	Is_makeup             bool      `json:"is_makeup" gorm:"default:false"` //เป็นชดเชยไหม
+	Makeup_for_session_id uint      `json:"makeup_for_session_id"`          //ชดเชยให้กับ Session ID ไหน
+	Notes                 string    `json:"notes" gorm:"type:text"`
+	BaseModel
+}
+
+type Schedules struct {
+	BaseModel
+	CourseID                uint       `json:"course_id" gorm:"not null"`
+	User_inCourseID         uint       `json:"user_in_course_id" gorm:"not null"`
+	RoomID                  uint       `json:"room_id"`
+	ScheduleName            string     `json:"schedule_name" gorm:"size:100;not null"`
+	ScheduleType            string     `json:"schedule_type" gorm:"size:50"`      // class, meeting, event, holiday, appointment
+	Recurring_pattern       string     `json:"recurring_pattern" gorm:"size:100"` // daily, weekly, bi-weekly, monthly, yearly, custom
+	Total_hours             int        `json:"total_hours"`
+	Hours_per_session       int        `json:"hours_per_session"`
+	Session_per_week        int        `json:"session_per_week"`
+	Max_students            int        `json:"max_students"`
+	Current_students        int        `json:"current_students"`
+	Start_date              time.Time  `json:"start_date"`
+	Estimated_end_date      time.Time  `json:"estimated_end_date"`
+	Actual_end_date         *time.Time `json:"actual_end_date"`
+	Status                  string     `json:"status" gorm:"size:50;default:'scheduled'"` // scheduled, active, paused, completed, cancelled
+	Auto_Reschedule_holiday bool       `json:"auto_reschedule" gorm:"default:false"`
+	Notes                   string     `json:"notes" gorm:"type:text"`
+	Admin_assigned          string     `json:"admin_assigned" gorm:"size:200"`
+
+	// Relationships
+	Course        Course        `json:"course" gorm:"foreignKey:CourseID"`
+	User_inCourse User_inCourse `json:"user_in_course" gorm:"foreignKey:User_inCourseID"`
+	Room          Room          `json:"room" gorm:"foreignKey:RoomID"`
+}
+
+type Schedules_or_Sessions_Comment struct {
+	BaseModel
+	ScheduleID uint   `json:"schedule_id" gorm:"null:true"`
+	SessionID  uint   `json:"session_id" gorm:"null:true"`
+	UserID     uint   `json:"user_id" gorm:"not null"`
+	Comment    string `json:"comment" gorm:"type:text;not null"`
+
+	// Relationships
+	Schedule Schedules         `json:"schedule" gorm:"foreignKey:ScheduleID"`
+	Session  Schedule_Sessions `json:"session" gorm:"foreignKey:SessionID"`
+	User     User              `json:"user" gorm:"foreignKey:UserID"`
 }

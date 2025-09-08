@@ -348,7 +348,7 @@ func (lc *LogController) GetLog(c *fiber.Ctx) error {
 	}
 
 	// Parse details if available
-	if activityLog.Details != nil && len(activityLog.Details) > 0 {
+	if activityLog.Details != nil {
 		var details map[string]interface{}
 		if err := json.Unmarshal(activityLog.Details, &details); err == nil {
 			response.Details = details

@@ -168,7 +168,7 @@ func (las *LogArchiveService) ArchiveOldLogs(daysOld int) error {
 			}
 
 			// Parse details
-			if log.Details != nil && len(log.Details) > 0 {
+			if log.Details != nil{
 				var details map[string]interface{}
 				if err := json.Unmarshal(log.Details, &details); err == nil {
 					archivedLog.Details = details
