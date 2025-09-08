@@ -9,6 +9,7 @@ env:
   AWS_REGION: ap-southeast-1
   STAGE: production
   LIGHT_DEPLOY: "true"   # set to false for a one-time full sync (repo files)
+  DEPLOY_DIR: /opt/englishkorat
 
 jobs:
   deploy:
@@ -65,11 +66,29 @@ jobs:
             LIGHT='${{ env.LIGHT_DEPLOY }}'
             AWS_REGION='${{ env.AWS_REGION }}'
             STAGE='${{ env.STAGE }}'
-            REPO_DIR=/opt/englishkorat
+            REPO_DIR='${{ env.DEPLOY_DIR }}'
             HEALTH_URL="http://localhost:3000/health"
             LAST_TAG_FILE=".last_successful_image"
             mkdir -p "$REPO_DIR"
             cd "$REPO_DIR"
+
+            trap 'rc=$?; set +x; echo "--- FAILURE DIAGNOSTICS (rc=$rc) ---" >&2; docker ps >&2 || true; docker logs --tail 80 englishkorat-api >&2 || true; echo "--- END DIAGNOSTICS ---" >&2; exit $rc' ERR
+
+            # If mkdir failed due to permission (silent because of set -e), redo with sudo and take ownership.
+            if [ ! -d "$REPO_DIR" ]; then
+              echo "[WARN] Initial mkdir failed (permission?). Retrying with sudo..." >&2
+              sudo mkdir -p "$REPO_DIR" || { echo "FATAL: cannot create $REPO_DIR" >&2; exit 1; }
+            fi
+            if [ ! -w "$REPO_DIR" ]; then
+              echo "[INFO] Adjusting ownership of $REPO_DIR for user $USER" >&2
+              sudo chown "$USER":"$USER" "$REPO_DIR" || true
+            fi
+            cd "$REPO_DIR"
+
+            echo "Runtime info: user=$(whoami) pwd=$PWD writeable=$( [ -w . ] && echo yes || echo no ) date=$(date -u +%H:%M:%S)" >&2
+            echo "Using IMAGE_NAME=$IMAGE_NAME IMAGE_TAG=$IMAGE_TAG LIGHT=$LIGHT" >&2
+            echo "--- BEGIN TRACE ---" >&2
+            set -x
 
             if [ "$LIGHT" = "false" ]; then
               echo "[FULL DEPLOY] Syncing repository (one-time)" >&2
