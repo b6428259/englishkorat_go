@@ -7,6 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/ssm"
 	"github.com/joho/godotenv"
 )
 
@@ -46,19 +49,56 @@ type Config struct {
 	LogFile  string
 }
 
+func (c *Config) GetDSN() string {
+	return c.DBUser + ":" + c.DBPassword + "@tcp(" + c.DBHost + ":" + c.DBPort + ")/" + c.DBName + "?charset=utf8mb4&parseTime=True&loc=Local"
+}
+
 var AppConfig *Config
 
 func LoadConfig() {
-	// Load .env file
-	if err := godotenv.Load(); err != nil {
-		log.Println("Warning: .env file not found, using environment variables")
+	useSSM := getEnv("USE_SSM", "false") == "true"
+
+	var (
+		ssmClient *ssm.SSM
+		paramMap  map[string]string
+	)
+
+	// Stage & base path for SSM (allows multi-env without code changes)
+	basePath := getEnv("SSM_BASE_PATH", "/englishkorat")
+	stage := getEnv("STAGE", getEnv("APP_ENV", "production"))
+	basePath = strings.TrimRight(basePath, "/")
+	prefix := basePath + "/" + stage
+
+	if useSSM {
+		sess, err := session.NewSession(&aws.Config{Region: aws.String(getEnv("AWS_REGION", "ap-southeast-1"))})
+		if err != nil {
+			log.Fatal("Failed to create AWS session:", err)
+		}
+		ssmClient = ssm.New(sess)
+		log.Printf("Using AWS SSM Parameter Store (prefix=%s)", prefix)
+		paramMap = fetchSSMParameters(ssmClient, prefix)
+	} else {
+		if err := godotenv.Load(); err != nil {
+			log.Println("Warning: .env file not found, using environment variables")
+		}
 	}
 
-	// Parse JWT expires duration
-	jwtExpiresStr := getEnv("JWT_EXPIRES_IN", "24h")
+	// Helper accessor respecting map / env fallback
+	getVal := func(key, def string) string {
+		if useSSM {
+			// map key stored uppercase
+			uk := strings.ToUpper(key)
+			if v, ok := paramMap[uk]; ok && v != "" {
+				return v
+			}
+		}
+		return getEnv(strings.ToUpper(key), def)
+	}
+
+	// Parse JWT_EXPIRES_IN with shorthand support
+	jwtExpiresStr := getVal("JWT_EXPIRES_IN", "24h")
 	jwtExpires, err := time.ParseDuration(jwtExpiresStr)
 	if err != nil {
-		// Allow simple day/week shorthand like "7d" or "2w"
 		s := strings.TrimSpace(strings.ToLower(jwtExpiresStr))
 		if len(s) > 1 {
 			unit := s[len(s)-1]
@@ -79,48 +119,42 @@ func LoadConfig() {
 		}
 	}
 
-	// Parse max file size
-	maxFileSizeStr := getEnv("MAX_FILE_SIZE", "10485760") // 10MB default
+	maxFileSizeStr := getVal("MAX_FILE_SIZE", "10485760")
 	maxFileSize, err := strconv.ParseInt(maxFileSizeStr, 10, 64)
 	if err != nil {
 		log.Fatal("Invalid MAX_FILE_SIZE format:", err)
 	}
 
 	AppConfig = &Config{
-		// Database
-		DBHost:     getEnv("DB_HOST", "localhost"),
-		DBPort:     getEnv("DB_PORT", "3306"),
-		DBUser:     getEnv("DB_USER", "root"),
-		DBPassword: getEnv("DB_PASSWORD", ""),
-		DBName:     getEnv("DB_NAME", "englishkorat_go"),
+		DBHost:     getVal("DB_HOST", "localhost"),
+		DBPort:     getVal("DB_PORT", "3306"),
+		DBUser:     getVal("DB_USER", "root"),
+		DBPassword: getVal("DB_PASSWORD", ""),
+		DBName:     getVal("DB_NAME", "englishkorat_go"),
 
-		// Redis
-		RedisHost:     getEnv("REDIS_HOST", "localhost"),
-		RedisPort:     getEnv("REDIS_PORT", "6379"),
-		RedisPassword: getEnv("REDIS_PASSWORD", ""),
+		RedisHost:     getVal("REDIS_HOST", "localhost"),
+		RedisPort:     getVal("REDIS_PORT", "6379"),
+		RedisPassword: getVal("REDIS_PASSWORD", ""),
 
-		// JWT
-		JWTSecret:    getEnv("JWT_SECRET", "your_super_secret_jwt_key"),
+		JWTSecret:    getVal("JWT_SECRET", "your_super_secret_jwt_key"),
 		JWTExpiresIn: jwtExpires,
 
-		// AWS S3
-		AWSRegion:          getEnv("AWS_REGION", "ap-southeast-1"),
-		AWSAccessKeyID:     getEnv("AWS_ACCESS_KEY_ID", ""),
-		AWSSecretAccessKey: getEnv("AWS_SECRET_ACCESS_KEY", ""),
-		S3BucketName:       getEnv("S3_BUCKET_NAME", "englishkorat-storage"),
+		AWSRegion:          getVal("AWS_REGION", "ap-southeast-1"),
+		AWSAccessKeyID:     getVal("AWS_ACCESS_KEY_ID", ""),
+		AWSSecretAccessKey: getVal("AWS_SECRET_ACCESS_KEY", ""),
+		S3BucketName:       getVal("S3_BUCKET_NAME", "englishkorat-storage"),
 
-		// Server
-		Port:   getEnv("PORT", "3000"),
-		AppEnv: getEnv("APP_ENV", "development"),
+		Port:   getVal("PORT", "3000"),
+		AppEnv: getVal("APP_ENV", "development"),
 
-		// File Upload
 		MaxFileSize:       maxFileSize,
-		AllowedExtensions: getEnv("ALLOWED_EXTENSIONS", "jpg,jpeg,png,webp,gif"),
+		AllowedExtensions: getVal("ALLOWED_EXTENSIONS", "jpg,jpeg,png,webp,gif"),
 
-		// Logging
-		LogLevel: getEnv("LOG_LEVEL", "info"),
-		LogFile:  getEnv("LOG_FILE", "logs/app.log"),
+		LogLevel: getVal("LOG_LEVEL", "info"),
+		LogFile:  getVal("LOG_FILE", "logs/app.log"),
 	}
+
+	validateConfig(AppConfig, useSSM)
 }
 
 func getEnv(key, defaultValue string) string {
@@ -130,12 +164,70 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-// GetDSN returns database connection string
-func (c *Config) GetDSN() string {
-	return c.DBUser + ":" + c.DBPassword + "@tcp(" + c.DBHost + ":" + c.DBPort + ")/" + c.DBName + "?charset=utf8mb4&parseTime=True&loc=Local"
+// getConfigValue retrieves configuration value from SSM or environment variables
+// Backwards compatibility wrapper if other code calls it (none currently)
+func getConfigValue(_ *ssm.SSM, _ bool, key, defaultValue string) string { //nolint:revive
+	return getEnv(key, defaultValue)
 }
 
-// GetRedisAddr returns Redis connection string
-func (c *Config) GetRedisAddr() string {
-	return c.RedisHost + ":" + c.RedisPort
+// fetchSSMParameters reads all parameters under prefix (non-recursive expected) and returns map with UPPERCASE keys.
+func fetchSSMParameters(client *ssm.SSM, prefix string) map[string]string {
+	out := make(map[string]string)
+	next := aws.String("")
+	for {
+		in := &ssm.GetParametersByPathInput{
+			Path:           aws.String(prefix),
+			WithDecryption: aws.Bool(true),
+			Recursive:      aws.Bool(true),
+		}
+		if *next != "" {
+			in.NextToken = next
+		}
+		resp, err := client.GetParametersByPath(in)
+		if err != nil {
+			log.Printf("Warning: unable to fetch SSM parameters for prefix %s: %v", prefix, err)
+			break
+		}
+		for _, p := range resp.Parameters {
+			if p.Name == nil || p.Value == nil {
+				continue
+			}
+			name := *p.Name
+			// last segment after '/'
+			idx := strings.LastIndex(name, "/")
+			key := name
+			if idx >= 0 {
+				key = name[idx+1:]
+			}
+			if key == "" {
+				continue
+			}
+			out[strings.ToUpper(key)] = *p.Value
+		}
+		if resp.NextToken == nil || *resp.NextToken == "" {
+			break
+		}
+		next = resp.NextToken
+	}
+	return out
+}
+
+func validateConfig(c *Config, usedSSM bool) {
+	// Only enforce stricter rules in production
+	if strings.ToLower(c.AppEnv) != "production" {
+		return
+	}
+	// Required secrets
+	required := map[string]string{
+		"DB_PASSWORD": c.DBPassword,
+		"JWT_SECRET":  c.JWTSecret,
+	}
+	for k, v := range required {
+		if strings.TrimSpace(v) == "" {
+			log.Fatalf("Missing required secret %s in production (SSM=%v)", k, usedSSM)
+		}
+	}
+	if len(c.JWTSecret) < 16 {
+		log.Fatal("JWT_SECRET too short (min 16 chars)")
+	}
 }

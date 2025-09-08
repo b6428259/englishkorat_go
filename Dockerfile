@@ -1,17 +1,38 @@
-FROM golang:1.21-alpine AS build
-RUN apk add --no-cache git
-WORKDIR /src
+## ---------- Build Stage ----------
+FROM golang:1.24-alpine AS builder
+WORKDIR /app
+
+# Install build deps
+RUN apk add --no-cache --update build-base git ca-certificates tzdata && update-ca-certificates
+
+# Leverage go mod cache
 COPY go.mod go.sum ./
 RUN go mod download
-COPY . .
-# Build all packages; adjust path (./cmd/...) if your main package lives elsewhere
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags='-s -w' -o /app ./...
 
-FROM alpine:3.18 AS runtime
-RUN apk add --no-cache ca-certificates
-COPY --from=build /app /app
-EXPOSE 8080
-# run as non-root user
-RUN adduser -D -u 1000 appuser || true
-USER 1000
-ENTRYPOINT ["/app"]
+# Copy source
+COPY . .
+
+# Set build flags for smaller binary
+ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64
+RUN go build -ldflags="-s -w" -o server .
+
+## ---------- Runtime Stage ----------
+FROM alpine:3.20 AS runtime
+WORKDIR /app
+
+RUN apk add --no-cache ca-certificates tzdata aws-cli && update-ca-certificates \
+    && adduser -D -g '' appuser \
+    && mkdir -p /app/logs && chown -R appuser:appuser /app/logs
+
+# Copy binary and required assets (static files, migrations if any)
+COPY --from=builder /app/server /app/server
+COPY --from=builder /app/storage /app/storage
+
+ENV APP_ENV=production PORT=3000
+EXPOSE 3000
+
+USER appuser
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD wget -qO- http://localhost:3000/health || exit 1
+
+ENTRYPOINT ["/app/server"]

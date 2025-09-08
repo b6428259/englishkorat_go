@@ -141,7 +141,7 @@ func (lc *LogController) GetLogs(c *fiber.Ctx) error {
 		}
 
 		// Parse details if available
-		if log.Details != nil && len(log.Details) > 0 {
+		if log.Details != nil {
 			var details map[string]interface{}
 			if err := json.Unmarshal(log.Details, &details); err == nil {
 				logs[i].Details = details

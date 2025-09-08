@@ -319,3 +319,4 @@ type Schedules_or_Sessions_Comment struct {
 	Session  Schedule_Sessions `json:"session" gorm:"foreignKey:SessionID"`
 	User     User              `json:"user" gorm:"foreignKey:UserID"`
 }
+
