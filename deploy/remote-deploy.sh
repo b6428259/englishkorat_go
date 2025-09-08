@@ -2,11 +2,29 @@
 set -euo pipefail
 
 REPO_DIR="/opt/englishkorat"
+if [ ! -d "$REPO_DIR" ]; then
+	sudo mkdir -p "$REPO_DIR"
+	sudo chown $USER:$USER "$REPO_DIR"
+fi
 cd "$REPO_DIR"
 
-echo "[1/6] Updating repo" >&2
-git fetch origin main
-git reset --hard origin/main
+echo "[1/6] Ensuring repo is ready" >&2
+if [ ! -d .git ]; then
+	echo "Existing directory is not a git repo. Backing up and cloning..." >&2
+	TIMESTAMP=$(date +%s)
+	sudo mv "$REPO_DIR" "${REPO_DIR}.bak.$TIMESTAMP" || true
+	sudo mkdir -p "$REPO_DIR"
+	sudo chown $USER:$USER "$REPO_DIR"
+	git clone https://github.com/$(git config --get remote.origin.url | sed 's#.*/##') "$REPO_DIR" || \
+		git clone https://github.com/b6428259/englishkorat "$REPO_DIR"
+	cd "$REPO_DIR"
+else
+	# Clean any local changes and update
+	git reset --hard
+	git clean -fd
+	git fetch origin main
+	git reset --hard origin/main
+fi
 
 # Ensure aws cli installed
 if ! command -v aws >/dev/null 2>&1; then

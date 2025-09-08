@@ -61,14 +61,30 @@ jobs:
           script_stop: true
           script: |
             set -e
-            if [ ! -d /opt/englishkorat/.git ]; then
-              sudo mkdir -p /opt/englishkorat
-              sudo chown $USER:$USER /opt/englishkorat
-              git clone https://github.com/${{ github.repository }} /opt/englishkorat
+            REPO_DIR=/opt/englishkorat
+            if [ ! -d "$REPO_DIR" ]; then
+              sudo mkdir -p "$REPO_DIR"
+              sudo chown $USER:$USER "$REPO_DIR"
             fi
-            cd /opt/englishkorat
-            git fetch origin main
-            git reset --hard origin/main
+            cd "$REPO_DIR"
+            if [ ! -d .git ]; then
+              # Not a git repo: initialize and fetch the branch safely
+              git init
+              git remote add origin https://github.com/${{ github.repository }} || true
+              # Try shallow fetch and checkout main
+              if git fetch --depth=1 origin main; then
+                git checkout -f -B main FETCH_HEAD
+              else
+                # Fallback: clone into temp and copy
+                TMPDIR=$(mktemp -d)
+                git clone --depth 1 https://github.com/${{ github.repository }} "$TMPDIR"
+                rsync -a --delete "$TMPDIR/" "$REPO_DIR/"
+                rm -rf "$TMPDIR"
+              fi
+            else
+              git fetch origin main
+              git reset --hard origin/main
+            fi
             export GITHUB_SHA=${{ github.sha }}
             bash deploy/remote-deploy.sh
 
