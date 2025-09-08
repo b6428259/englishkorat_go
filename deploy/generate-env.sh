@@ -27,22 +27,48 @@ echo "AWS_REGION=$AWS_REGION_ENV" >> "$TMP_FILE"
 echo "STAGE=$STAGE" >> "$TMP_FILE"
 echo "USE_SSM=true" >> "$TMP_FILE"
 
-# Paginate through parameters (in case >10)
+# Paginate through parameters reliably using JSON parsing (python3 required)
 NEXT_TOKEN=""
 COUNT=0
 while :; do
   if [ -n "$NEXT_TOKEN" ]; then
-    RESP=$(aws ssm get-parameters-by-path --with-decryption --path "$FULL_PREFIX" --recursive --region "$AWS_REGION_ENV" --max-results 10 --next-token "$NEXT_TOKEN" --query 'Parameters[].[Name,Value]' --output text || true)
+    RESP_JSON=$(aws ssm get-parameters-by-path --with-decryption --path "$FULL_PREFIX" --recursive --region "$AWS_REGION_ENV" --max-results 10 --next-token "$NEXT_TOKEN" --output json || true)
   else
-    RESP=$(aws ssm get-parameters-by-path --with-decryption --path "$FULL_PREFIX" --recursive --region "$AWS_REGION_ENV" --max-results 10 --query 'Parameters[].[Name,Value]' --output text || true)
+    RESP_JSON=$(aws ssm get-parameters-by-path --with-decryption --path "$FULL_PREFIX" --recursive --region "$AWS_REGION_ENV" --max-results 10 --output json || true)
   fi
 
-  # Break if no params this page
-  if [ -z "$RESP" ]; then
+  if [ -z "$RESP_JSON" ] || [ "$RESP_JSON" = "null" ]; then
+    break
+  fi
+
+  # Parse parameters and next token using python3
+  PARSED=$(printf '%s' "$RESP_JSON" | python3 - <<'PY'
+import sys, json
+data = json.load(sys.stdin)
+params = data.get('Parameters', [])
+for p in params:
+    name = p.get('Name','')
+    value = p.get('Value','')
+    # output tab separated
+    print(name + '\t' + value.replace('\n',' '))
+nt = data.get('NextToken')
+if nt is None:
+    print('NEXT_TOKEN::')
+else:
+    print('NEXT_TOKEN::' + nt)
+PY
+)
+
+  if [ -z "$PARSED" ]; then
     break
   fi
 
   while IFS=$'\t' read -r name value; do
+    if [[ "$name" == NEXT_TOKEN::* ]]; then
+      NT=${name#NEXT_TOKEN::}${value}
+      NEXT_TOKEN=${NT}
+      continue
+    fi
     [ -z "$name" ] && continue
     key=${name##*/}
     env_key=$(echo "$key" | tr '[:lower:]' '[:upper:]')
@@ -59,14 +85,12 @@ while :; do
     fi
     echo "$env_key=$esc" >> "$TMP_FILE"
     COUNT=$((COUNT+1))
-  done <<< "$RESP"
+  done <<< "$PARSED"
 
-  # Get next token (if any)
-  NT=$(aws ssm get-parameters-by-path --with-decryption --path "$FULL_PREFIX" --recursive --region "$AWS_REGION_ENV" --max-results 10 --query 'NextToken' --output text || true)
-  if [ "$NT" = "None" ] || [ -z "$NT" ]; then
+  # Stop if no next token
+  if [ -z "$NEXT_TOKEN" ]; then
     break
   fi
-  NEXT_TOKEN=$NT
 done
 
 # Ensure essentials for compose if not in SSM (fallbacks)
