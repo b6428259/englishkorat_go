@@ -36,7 +36,8 @@ jobs:
           images: ${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest
-            type=sha,format=short
+            type=sha,format=short,prefix=
+            type=sha,format=short  # keep legacy sha-<short> form as backup
 
       - name: Build & Push image
         uses: docker/build-push-action@v6
@@ -124,6 +125,14 @@ jobs:
               else
                 echo "[LIGHT DEPLOY] Found existing docker-compose.production.yml" >&2
               fi
+              # Fetch generate-env.sh if missing so we still populate .env
+              if [ ! -x deploy/generate-env.sh ]; then
+                mkdir -p deploy
+                RAW_GEN_URL="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/deploy/generate-env.sh"
+                echo "[LIGHT DEPLOY] Fetching generate-env.sh: $RAW_GEN_URL" >&2
+                (curl -fsSL "$RAW_GEN_URL" -o deploy/generate-env.sh || wget -qO deploy/generate-env.sh "$RAW_GEN_URL") || echo "WARN: could not fetch generate-env.sh" >&2
+                chmod +x deploy/generate-env.sh 2>/dev/null || true
+              fi
             fi
 
             # Final check compose exists
@@ -152,8 +161,18 @@ jobs:
             fi
             echo "Previous successful tag: ${PREVIOUS_TAG:-<none>}" >&2
 
-            echo "Pulling ${IMAGE_NAME}:${IMAGE_TAG}" >&2
-            docker pull "${IMAGE_NAME}:${IMAGE_TAG}" || true
+            echo "Pulling primary tag ${IMAGE_NAME}:${IMAGE_TAG}" >&2
+            if ! docker pull "${IMAGE_NAME}:${IMAGE_TAG}"; then
+              echo "Primary tag not found, trying sha-${IMAGE_TAG}" >&2
+              if docker pull "${IMAGE_NAME}:sha-${IMAGE_TAG}"; then
+                IMAGE_TAG="sha-${IMAGE_TAG}"
+                echo "Using fallback tag $IMAGE_TAG" >&2
+              else
+                echo "Fallback sha-${IMAGE_TAG} not found, trying latest" >&2
+                docker pull "${IMAGE_NAME}:latest" || true
+                IMAGE_TAG=latest
+              fi
+            fi
             echo "Launching stack (candidate tag=${IMAGE_TAG})" >&2
             IMAGE_TAG=${IMAGE_TAG} docker compose -f docker-compose.production.yml up -d --remove-orphans
 
