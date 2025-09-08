@@ -1,22 +1,22 @@
-name: Build & Deploy
+name: build-and-deploy
 
 on:
   push:
     branches: ["main"]
 
 env:
-  REGISTRY: docker.io
   IMAGE_NAME: b6428259/englishkorat
   AWS_REGION: ap-southeast-1
   STAGE: production
+  LIGHT_DEPLOY: "true"   # set to false for a one-time full sync (repo files)
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - name: Checkout
+      - name: Checkout (metadata only)
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
@@ -25,20 +25,19 @@ jobs:
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          # Create GitHub repo secrets DOCKERHUB_USERNAME / DOCKERHUB_TOKEN first
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Extract metadata (tags)
+      - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest
-            type=sha,format=short,prefix=
+            type=sha,format=short
 
-      - name: Build and push
+      - name: Build & Push image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -47,52 +46,69 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      - name: Get short SHA
+      - name: Derive short SHA
         id: vars
         run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
-          # Create GitHub repo secrets: SSH_HOST, SSH_USER, SSH_KEY (private key contents)
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: 22
           script_stop: true
           script: |
-            set -e
+            set -euo pipefail
+            IMAGE_NAME='${{ env.IMAGE_NAME }}'
+            IMAGE_TAG='${{ steps.vars.outputs.SHORT_SHA }}'
+            LIGHT='${{ env.LIGHT_DEPLOY }}'
+            AWS_REGION='${{ env.AWS_REGION }}'
+            STAGE='${{ env.STAGE }}'
             REPO_DIR=/opt/englishkorat
-            if [ ! -d "$REPO_DIR" ]; then
-              sudo mkdir -p "$REPO_DIR"
-              sudo chown $USER:$USER "$REPO_DIR"
-            fi
+            mkdir -p "$REPO_DIR"
             cd "$REPO_DIR"
-            if [ ! -d .git ]; then
-              # Not a git repo: initialize and fetch the branch safely
-              git init
-              git remote add origin https://github.com/${{ github.repository }} || true
-              # Try shallow fetch and checkout main
-              if git fetch --depth=1 origin main; then
-                git checkout -f -B main FETCH_HEAD
+
+            if [ "$LIGHT" = "false" ]; then
+              echo "[FULL DEPLOY] Syncing repository (one-time)" >&2
+              if [ -d .git ]; then
+                git fetch origin main && git reset --hard origin/main
               else
-                # Fallback: clone into temp and copy
-                TMPDIR=$(mktemp -d)
-                git clone --depth 1 https://github.com/${{ github.repository }} "$TMPDIR"
-                rsync -a --delete "$TMPDIR/" "$REPO_DIR/"
-                rm -rf "$TMPDIR"
+                rm -rf tmp_clone && git clone https://github.com/${{ github.repository }} tmp_clone
+                cp -a tmp_clone/. .
+                rm -rf tmp_clone
               fi
             else
-              git fetch origin main
-              git reset --hard origin/main
+              echo "[LIGHT DEPLOY] Skipping repo sync; using existing compose + scripts" >&2
             fi
-            export GITHUB_SHA=${{ github.sha }}
-            bash deploy/remote-deploy.sh
 
-      - name: Post disk usage
+            # Ensure compose file exists
+            if [ ! -f docker-compose.production.yml ]; then
+              echo "ERROR: Missing docker-compose.production.yml (run with LIGHT_DEPLOY=false once)." >&2
+              exit 1
+            fi
+
+            # Regenerate .env if generator exists
+            if [ -x deploy/generate-env.sh ]; then
+              echo "Generating .env from SSM" >&2
+              bash deploy/generate-env.sh || echo "WARN: generate-env.sh failed; continuing" >&2
+            else
+              echo "WARN: deploy/generate-env.sh not found or not executable; using existing .env" >&2
+            fi
+
+            echo "Pulling ${IMAGE_NAME}:${IMAGE_TAG}" >&2
+            docker pull "${IMAGE_NAME}:${IMAGE_TAG}" || true
+            echo "Launching stack (tag=${IMAGE_TAG})" >&2
+            IMAGE_TAG=${IMAGE_TAG} docker compose -f docker-compose.production.yml up -d --remove-orphans
+            docker image prune -f || true
+
+      - name: Disk usage after deploy
         if: always()
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          script: df -h /
+          script: |
+            df -h /
+            docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
