@@ -1,12 +1,16 @@
 package middleware
 
 import (
+	"context"
+	"crypto/md5"
+	"encoding/json"
 	"englishkorat_go/database"
 	"englishkorat_go/models"
-	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/go-redis/redis/v8"
 	"github.com/gofiber/fiber/v2"
 	"github.com/sirupsen/logrus"
 )
@@ -24,11 +28,11 @@ func LoggerMiddleware() fiber.Handler {
 		status := c.Response().StatusCode()
 
 		logrus.WithFields(logrus.Fields{
-			"method":    c.Method(),
-			"path":      c.Path(),
-			"status":    status,
-			"duration":  duration.String(),
-			"ip":        c.IP(),
+			"method":     c.Method(),
+			"path":       c.Path(),
+			"status":     status,
+			"duration":   duration.String(),
+			"ip":         c.IP(),
 			"user_agent": c.Get("User-Agent"),
 		}).Info("HTTP Request")
 
@@ -36,7 +40,8 @@ func LoggerMiddleware() fiber.Handler {
 	}
 }
 
-// ActivityLogger logs user activities to database
+// EnhancedActivityLogger logs user activities with CIA compliance
+// Supports Redis caching for performance and detailed security logging
 func LogActivity(c *fiber.Ctx, action, resource string, resourceID uint, details interface{}) {
 	// Get current user
 	user, err := GetCurrentUser(c)
@@ -53,7 +58,7 @@ func LogActivity(c *fiber.Ctx, action, resource string, resourceID uint, details
 		}
 	}
 
-	// Create activity log
+	// Enhanced security logging with CIA principles
 	activityLog := models.ActivityLog{
 		UserID:     user.ID,
 		Action:     action,
@@ -64,12 +69,92 @@ func LogActivity(c *fiber.Ctx, action, resource string, resourceID uint, details
 		UserAgent:  c.Get("User-Agent"),
 	}
 
-	// Save to database (in goroutine to not block request)
+	// Add integrity hash for tamper detection
+	activityLog.BaseModel.CreatedAt = time.Now()
+	integrityHash := generateIntegrityHash(activityLog)
+
+	// Enhanced details with security metadata
+	securityDetails := map[string]interface{}{
+		"original_details": details,
+		"integrity_hash":   integrityHash,
+		"session_id":       c.Get("X-Session-ID", "unknown"),
+		"request_id":       c.Get("X-Request-ID", generateRequestID()),
+		"forwarded_for":    c.Get("X-Forwarded-For"),
+		"real_ip":          c.Get("X-Real-IP"),
+		"protocol":         c.Protocol(),
+		"method":           c.Method(),
+		"path":             c.Path(),
+		"query":            string(c.Request().URI().QueryString()),
+		"status_code":      c.Response().StatusCode(),
+		"content_length":   len(c.Response().Body()),
+		"referer":          c.Get("Referer"),
+		"timestamp_utc":    time.Now().UTC().Unix(),
+		"timezone":         time.Now().Location().String(),
+	}
+
+	if securityDetailsBytes, err := json.Marshal(securityDetails); err == nil {
+		activityLog.Details = securityDetailsBytes
+	}
+
+	// Save to Redis cache first for performance (24-hour TTL)
 	go func() {
-		if err := database.DB.Create(&activityLog).Error; err != nil {
-			logrus.WithError(err).Error("Failed to save activity log")
+		if err := cacheActivityLog(activityLog); err != nil {
+			logrus.WithError(err).Error("Failed to cache activity log, saving directly to database")
+			// Fallback to direct database save if Redis fails
+			if err := database.DB.Create(&activityLog).Error; err != nil {
+				logrus.WithError(err).Error("Failed to save activity log to database")
+			}
 		}
 	}()
+}
+
+// generateIntegrityHash creates a hash for tamper detection
+func generateIntegrityHash(log models.ActivityLog) string {
+	data := fmt.Sprintf("%d:%s:%s:%d:%s:%s:%s",
+		log.UserID,
+		log.Action,
+		log.Resource,
+		log.ResourceID,
+		log.IPAddress,
+		log.UserAgent,
+		log.CreatedAt.Format(time.RFC3339),
+	)
+	return fmt.Sprintf("%x", md5.Sum([]byte(data)))
+}
+
+// generateRequestID creates a unique request identifier
+func generateRequestID() string {
+	return fmt.Sprintf("req_%d_%x", time.Now().UnixNano(), md5.Sum([]byte(fmt.Sprintf("%d", time.Now().UnixNano()))))
+}
+
+// cacheActivityLog stores activity log in Redis with 24-hour TTL
+func cacheActivityLog(log models.ActivityLog) error {
+	redisClient := database.GetRedisClient()
+	ctx := context.Background()
+
+	// Serialize log to JSON
+	logData, err := json.Marshal(log)
+	if err != nil {
+		return fmt.Errorf("failed to marshal log: %v", err)
+	}
+
+	// Generate cache key with timestamp for uniqueness
+	cacheKey := fmt.Sprintf("log:%d:%s:%d", log.UserID, log.Action, time.Now().UnixNano())
+
+	// Store in Redis with 24-hour TTL
+	if err := redisClient.Set(ctx, cacheKey, logData, 24*time.Hour).Err(); err != nil {
+		return fmt.Errorf("failed to cache log: %v", err)
+	}
+
+	// Also add to a sorted set for efficient batch processing
+	if err := redisClient.ZAdd(ctx, "logs:queue", &redis.Z{
+		Score:  float64(time.Now().Unix()),
+		Member: cacheKey,
+	}).Err(); err != nil {
+		logrus.WithError(err).Error("Failed to add log to processing queue")
+	}
+
+	return nil
 }
 
 // LogActivityMiddleware automatically logs CRUD operations

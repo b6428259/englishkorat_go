@@ -3,9 +3,9 @@ package main
 import (
 	"englishkorat_go/config"
 	"englishkorat_go/database"
-	"englishkorat_go/database/seeders"
 	"englishkorat_go/middleware"
 	"englishkorat_go/routes"
+	"englishkorat_go/services"
 	"log"
 	"os"
 
@@ -19,17 +19,16 @@ import (
 func init() {
 	// Initialize logging
 	setupLogging()
-	
+
 	// Load configuration
 	config.LoadConfig()
-	
+
 	// Connect to database
 	database.Connect()
-	
-	// Run seeders if this is a fresh installation
-	if shouldRunSeeders() {
-		seeders.SeedAll()
-	}
+
+	// Start log maintenance scheduler
+	logArchiveService := services.NewLogArchiveService()
+	logArchiveService.StartLogMaintenanceScheduler()
 }
 
 func main() {
@@ -69,18 +68,18 @@ func main() {
 	// 404 handler
 	app.Use(func(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"error":   "Route not found",
-			"path":    c.Path(),
-			"method":  c.Method(),
+			"error":  "Route not found",
+			"path":   c.Path(),
+			"method": c.Method(),
 		})
 	})
 
 	// Start server
-	port := ":" + config.AppConfig.Port
+	port := "localhost" + ":" + config.AppConfig.Port
 	log.Printf("🚀 Server starting on port %s", config.AppConfig.Port)
 	log.Printf("📚 English Korat API v1.0.0")
 	log.Printf("🌍 Environment: %s", config.AppConfig.AppEnv)
-	
+
 	if err := app.Listen(port); err != nil {
 		log.Fatal("Failed to start server:", err)
 	}
@@ -95,7 +94,7 @@ func setupLogging() {
 
 	// Configure logrus
 	logrus.SetFormatter(&logrus.JSONFormatter{})
-	
+
 	// Set log level
 	level, err := logrus.ParseLevel("info") // Default to info
 	if err == nil {
@@ -114,14 +113,6 @@ func setupLogging() {
 	}
 }
 
-// shouldRunSeeders checks if seeders should be run
-func shouldRunSeeders() bool {
-	// Check if there are any users in the database
-	var count int64
-	database.DB.Model(&database.DB).Table("users").Count(&count)
-	return count == 0
-}
-
 // customErrorHandler handles application errors
 func customErrorHandler(c *fiber.Ctx, err error) error {
 	code := fiber.StatusInternalServerError
@@ -135,18 +126,18 @@ func customErrorHandler(c *fiber.Ctx, err error) error {
 
 	// Log the error
 	logrus.WithFields(logrus.Fields{
-		"error":   err.Error(),
-		"path":    c.Path(),
-		"method":  c.Method(),
-		"ip":      c.IP(),
-		"status":  code,
+		"error":  err.Error(),
+		"path":   c.Path(),
+		"method": c.Method(),
+		"ip":     c.IP(),
+		"status": code,
 	}).Error("Request error")
 
 	// Send error response
 	return c.Status(code).JSON(fiber.Map{
-		"error":   message,
-		"code":    code,
-		"path":    c.Path(),
-		"method":  c.Method(),
+		"error":  message,
+		"code":   code,
+		"path":   c.Path(),
+		"method": c.Method(),
 	})
 }

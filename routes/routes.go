@@ -18,13 +18,14 @@ func SetupRoutes(app *fiber.App) {
 	teacherController := &controllers.TeacherController{}
 	roomController := &controllers.RoomController{}
 	notificationController := &controllers.NotificationController{}
+	logController := &controllers.LogController{}
 
 	// API group
 	api := app.Group("/api")
 
 	// Public routes (no authentication required)
 	public := api.Group("/public")
-	
+
 	// Courses - PUBLIC endpoint as required
 	public.Get("/courses", courseController.GetCourses)
 	public.Get("/courses/:id", courseController.GetCourse)
@@ -105,6 +106,15 @@ func SetupRoutes(app *fiber.App) {
 	notifications.Patch("/:id/read", notificationController.MarkAsRead)
 	notifications.Patch("/mark-all-read", notificationController.MarkAllAsRead)
 	notifications.Delete("/:id", notificationController.DeleteNotification)
+
+	// Log management routes (Admin/Owner only)
+	logs := protected.Group("/logs", middleware.RequireOwnerOrAdmin())
+	logs.Get("/", logController.GetLogs)
+	logs.Get("/stats", logController.GetLogStats)
+	logs.Get("/:id", logController.GetLog)
+	logs.Delete("/old", logController.DeleteOldLogs)
+	logs.Get("/export", logController.ExportLogs)
+	logs.Post("/flush-cache", logController.FlushCachedLogs)
 }
 
 // SetupStaticRoutes configures static file serving

@@ -1,0 +1,1146 @@
+{
+	"info": {
+		"_postman_id": "english-korat-api-collection",
+		"name": "🎓 English Korat API - Complete Collection",
+		"description": "# 🎓 English Korat Learning Management System API\n\n## 📋 Overview\nครบถ้วนสำหรับระบบจัดการเรียนรู้ภาษาอังกฤษ English Korat ที่รองรับการทำงานแบบ multi-branch พร้อมระบบจัดการผู้ใช้ นักเรียน ครู และคอร์สเรียนอย่างครบถ้วน\n\n## 🏗️ System Architecture\n- **Backend**: Go (Fiber Framework)\n- **Database**: MySQL 8.0 with GORM\n- **Cache**: Redis for performance optimization\n- **Storage**: AWS S3 for file management\n- **Security**: JWT-based authentication with role-based access control\n- **Logging**: Enhanced CIA-compliant activity logging\n\n## 👥 User Roles & Permissions\n- **🔴 Owner**: Full system access (can manage admins)\n- **🟠 Admin**: Full system access except owner management\n- **🟡 Teacher**: Teaching-related features + student management\n- **🟢 Student**: Learning-related features only\n\n## 🌟 Key Features\n✅ **Multi-branch Support** - จัดการหลายสาขาพร้อมกัน\n✅ **Bilingual System** - รองรับภาษาไทยและอังกฤษ\n✅ **Advanced User Management** - ระบบผู้ใช้แบบครบถ้วน\n✅ **Student Profiling** - โปรไฟล์นักเรียนรายละเอียด (CEFR levels, learning goals)\n✅ **Teacher Management** - จัดการครูและความเชี่ยวชาญ\n✅ **Room & Resource Management** - จัดการห้องเรียนและอุปกรณ์\n✅ **Course Catalog** - ระบบจัดการคอร์สเรียน\n✅ **Real-time Notifications** - การแจ้งเตือนแบบ real-time\n✅ **Activity Logging** - ระบบ log แบบ CIA-compliant\n✅ **File Upload & Management** - อัปโหลดไฟล์ + auto-convert WebP\n\n## 🚀 Quick Start Guide\n\n### 1. Environment Setup\n1. Import `English_Korat_API.postman_collection.json`\n2. Import `English_Korat_API.postman_environment.json`\n3. Set Environment to \"English Korat API Environment\"\n4. Update `base_url` if needed (default: http://localhost:3000)\n\n### 2. Authentication Flow\n1. ไปที่ **🔐 Authentication → Login**\n2. ใช้ credentials: `{\"username\": \"admin\", \"password\": \"password123\"}`\n3. Token จะถูกเก็บอัตโนมัติใน environment variables\n4. ใช้ APIs อื่น ๆ ได้ทันที\n\n### 3. API Usage Examples\n**ดู Public Courses:**\n```http\nGET /api/public/courses?branch_id=1&level=Foundation\n```\n\n**สร้าง Student:**\n```http\nPOST /api/students\n{\n  \"user_id\": 3,\n  \"first_name\": \"สมชาย\",\n  \"last_name\": \"ใจดี\",\n  \"age\": 20,\n  \"cefr_level\": \"A2\"\n}\n```\n\n**ดู Activity Logs:**\n```http\nGET /api/logs?action=CREATE&resource=students&limit=50\n```\n\n## 📊 Collections Overview\n\n### 🔐 Authentication (3 endpoints)\nการจัดการการเข้าสู่ระบบและโปรไฟล์ผู้ใช้\n- Login with auto-token management\n- Profile management\n- Password change\n\n### 📚 Public Courses (2 endpoints)\nข้อมูลคอร์สสาธารณะที่ไม่ต้อง authentication\n- Browse available courses\n- View course details\n\n### 👥 User Management (4 endpoints)\nจัดการผู้ใช้ระบบ (Admin/Owner only)\n- CRUD operations for users\n- Avatar upload with auto-conversion\n- Role and branch management\n\n### 🏢 Branch Management (2 endpoints)\nจัดการสาขาต่าง ๆ\n- Multi-branch operations\n- Branch information management\n\n### 🎓 Student Management (2 endpoints)\nจัดการข้อมูลนักเรียนแบบละเอียด\n- Comprehensive student profiles\n- CEFR level tracking\n- Learning preferences\n\n### 👨‍🏫 Teacher Management (3 endpoints)\nจัดการข้อมูลครูและความเชี่ยวชาญ\n- Teacher profiles and specializations\n- Qualifications tracking\n- Branch assignment\n\n### 🏫 Room Management (3 endpoints)\nจัดการห้องเรียนและสถานที่\n- Room availability tracking\n- Equipment management\n- Capacity planning\n\n### 📖 Course Management (1 endpoint)\nสร้างและจัดการคอร์สเรียน (Protected)\n- Course creation with bilingual support\n- Level and type categorization\n\n### 🔔 Notifications (4 endpoints)\nระบบการแจ้งเตือนแบบครบถ้วน\n- Bilingual notifications\n- Role-based targeting\n- Read status tracking\n\n### 📊 Log Management (6 endpoints)\nระบบจัดการ activity logs แบบ enterprise\n- CIA-compliant logging\n- Advanced filtering and search\n- Export capabilities\n- Cache management\n\n## 🔒 Security Features\n- **JWT Authentication**: Secure token-based auth\n- **Role-based Access Control**: Granular permissions\n- **Activity Logging**: Complete audit trail\n- **Input Validation**: Comprehensive data validation\n- **File Security**: Safe file upload with type checking\n- **CORS Protection**: Cross-origin security\n\n## 🛠️ Technical Specifications\n- **API Version**: v1.0.0\n- **Base URL**: `http://localhost:3000/api`\n- **Content Type**: `application/json`\n- **Authentication**: `Bearer {jwt_token}`\n- **Error Format**: Consistent JSON error responses\n- **File Upload**: Multipart form-data support\n\n## 📞 Support & Documentation\n- **API Documentation**: Check `API_DOCUMENTATION.md`\n- **Logging System**: See `LOGGING_SYSTEM.md`\n- **Setup Guide**: Follow `POSTMAN_SETUP.md`\n\n---\n*Created for English Korat Learning Management System v1.0.0*",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "🔐 Authentication",
+			"description": "## 🔐 การจัดการระบบ Authentication\n\n### Overview\nกลุ่ม endpoints สำหรับการจัดการการเข้าสู่ระบบ โปรไฟล์ผู้ใช้ และการเปลี่ยนรหัสผ่าน\n\n### Features\n- ✅ **JWT Token Management**: Login แล้วเก็บ token อัตโนมัติ\n- ✅ **Auto Session Handling**: ไม่ต้องคัดลอก token ด้วยตัวเอง\n- ✅ **Profile Management**: ดูและจัดการข้อมูลโปรไฟล์\n- ✅ **Secure Password Change**: เปลี่ยนรหัสผ่านแบบปลอดภัย\n\n### Authentication Flow\n1. เริ่มต้นด้วย **Login** endpoint\n2. ใส่ username และ password\n3. หาก Login สำเร็จ จะได้ JWT token กลับมา\n4. Token จะถูกเก็บใน environment variable `jwt_token` อัตโนมัติ\n5. สามารถใช้ protected endpoints อื่น ๆ ได้ทันที\n\n### Default Test Accounts\n```json\n{\n  \"admin\": {\n    \"username\": \"admin\",\n    \"password\": \"password123\",\n    \"role\": \"admin\"\n  },\n  \"teacher\": {\n    \"username\": \"teacher1\",\n    \"password\": \"password123\",\n    \"role\": \"teacher\"\n  },\n  \"student\": {\n    \"username\": \"student1\",\n    \"password\": \"password123\",\n    \"role\": \"student\"\n  }\n}\n```\n\n### Usage Tips\n- 🔄 Token หมดอายุทุก 7 วัน (ตั้งค่าได้)\n- 🔒 ใช้ HTTPS ใน production เสมо\n- 📱 รองรับ session management สำหรับ mobile apps\n- 🛡️ Password ถูกเข้ารหัสด้วย bcrypt",
+			"item": [
+				{
+					"name": "Login",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"// Extract token from response and set as environment variable",
+									"if (pm.response.code === 200) {",
+									"    const responseJson = pm.response.json();",
+									"    if (responseJson.token) {",
+									"        pm.environment.set('jwt_token', responseJson.token);",
+									"        pm.environment.set('user_id', responseJson.user.id);",
+									"        pm.environment.set('user_role', responseJson.user.role);",
+									"        pm.environment.set('user_branch_id', responseJson.user.branch_id);",
+									"        console.log('Token saved:', responseJson.token);",
+									"        console.log('User info saved');",
+									"    }",
+									"} else {",
+									"    console.log('Login failed:', pm.response.text());",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"username\": \"admin\",\n  \"password\": \"password123\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						},
+						"description": "Login with username and password to get JWT token. The token will be automatically saved to environment variables for use in other requests."
+					}
+				},
+				{
+					"name": "Get Profile",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/profile",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"profile"
+							]
+						},
+						"description": "Get current user profile information. Requires authentication."
+					}
+				},
+				{
+					"name": "Change Password",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"current_password\": \"password123\",\n  \"new_password\": \"newpassword123\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/profile/password",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"profile",
+								"password"
+							]
+						},
+						"description": "Change user password. Requires current password for verification."
+					}
+				}
+			]
+		},
+		{
+			"name": "📚 Public Courses",
+			"description": "Public endpoints for course information (no authentication required)",
+			"item": [
+				{
+					"name": "Get All Courses",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/public/courses?branch_id=1&status=active&course_type=english_4skills&level=Foundation",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"public",
+								"courses"
+							],
+							"query": [
+								{
+									"key": "branch_id",
+									"value": "1",
+									"description": "Filter by branch ID"
+								},
+								{
+									"key": "status",
+									"value": "active",
+									"description": "Filter by status (active/inactive)"
+								},
+								{
+									"key": "course_type",
+									"value": "english_4skills",
+									"description": "Filter by course type (english_4skills, ielts_prep, toeic_prep, conversation)"
+								},
+								{
+									"key": "level",
+									"value": "Foundation",
+									"description": "Filter by level (Foundation, Beginner, Intermediate, Advanced)"
+								}
+							]
+						},
+						"description": "Get list of all available courses with optional filters. This is a public endpoint that doesn't require authentication."
+					}
+				},
+				{
+					"name": "Get Single Course",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/public/courses/47",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"public",
+								"courses",
+								"47"
+							]
+						},
+						"description": "Get details of a specific course by ID. This is a public endpoint."
+					}
+				}
+			]
+		},
+		{
+			"name": "👥 User Management",
+			"description": "## 👥 การจัดการผู้ใช้ระบบ\n\n### Overview\nกลุ่ม endpoints สำหรับการจัดการผู้ใช้ทั้งหมดในระบบ รวมถึงการสร้าง แก้ไข และลบผู้ใช้\n\n### User Roles & Permissions\n| Role | Create | Read | Update | Delete | Special Access |\n|------|--------|------|--------| -------|----------------|\n| **Owner** | ✅ All | ✅ All | ✅ All | ✅ All | System Config |\n| **Admin** | ✅ Teachers/Students | ✅ All | ✅ Teachers/Students | ✅ Teachers/Students | User Reports |\n| **Teacher** | ✅ Students | ✅ Own Students | ✅ Own Students | ❌ | Grade Management |\n| **Student** | ❌ | ✅ Own Profile | ✅ Own Profile | ❌ | Course Access |\n\n### Features\n- 🔍 **Advanced Search**: ค้นหาด้วย username, email, role, branch\n- 📊 **Pagination**: จัดการผู้ใช้จำนวนมากได้อย่างมีประสิทธิภาพ\n- 🏷️ **Role-based Filtering**: กรองตาม role และสถานะ\n- 🔐 **Secure Operations**: ทุก operation ผ่าน authentication\n- 📈 **Activity Tracking**: บันทึกการเปลี่ยนแปลงทั้งหมด\n\n### Common Use Cases\n1. **Teacher Management**: สร้างและจัดการบัญชีครู\n2. **Student Enrollment**: เพิ่มนักเรียนเข้าระบบ\n3. **Bulk Operations**: จัดการผู้ใช้หลายคนพร้อมกัน\n4. **Profile Updates**: อัพเดทข้อมูลส่วนตัว\n5. **Access Control**: จัดการสิทธิ์การเข้าถึง\n\n### Sample Data Structure\n```json\n{\n  \"id\": 1,\n  \"username\": \"john_teacher\",\n  \"email\": \"john@englishkorat.com\",\n  \"first_name\": \"John\",\n  \"last_name\": \"Smith\",\n  \"role\": \"teacher\",\n  \"branch_id\": 1,\n  \"is_active\": true,\n  \"created_at\": \"2024-01-15T10:30:00Z\",\n  \"updated_at\": \"2024-01-15T10:30:00Z\"\n}\n```",
+			"item": [
+				{
+					"name": "Get Users",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/users?page=1&limit=10&role=student&branch_id=1",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"users"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"description": "Page number for pagination"
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"description": "Number of items per page"
+								},
+								{
+									"key": "role",
+									"value": "student",
+									"description": "Filter by user role (owner, admin, teacher, student)"
+								},
+								{
+									"key": "branch_id",
+									"value": "1",
+									"description": "Filter by branch ID"
+								}
+							]
+						},
+						"description": "Get paginated list of users with optional filters. Requires admin or owner role."
+					}
+				},
+				{
+					"name": "Create User",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"username\": \"new_student\",\n  \"password\": \"password123\",\n  \"email\": \"student@example.com\",\n  \"phone\": \"0812345678\",\n  \"role\": \"student\",\n  \"branch_id\": 1\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/users",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"users"
+							]
+						},
+						"description": "Create a new user account. Requires admin or owner role."
+					}
+				},
+				{
+					"name": "Update User",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"updated_email@example.com\",\n  \"phone\": \"0898765432\",\n  \"status\": \"active\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/users/{{user_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"users",
+								"{{user_id}}"
+							]
+						},
+						"description": "Update user information. Replace {{user_id}} with actual user ID."
+					}
+				},
+				{
+					"name": "Upload User Avatar",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "avatar",
+									"type": "file",
+									"src": [],
+									"description": "Select image file (JPG, JPEG, PNG, GIF, WEBP)"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/api/users/{{user_id}}/avatar",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"users",
+								"{{user_id}}",
+								"avatar"
+							]
+						},
+						"description": "Upload avatar image for user. Image will be automatically converted to WebP format and stored in S3."
+					}
+				}
+			]
+		},
+		{
+			"name": "🏢 Branch Management",
+			"description": "## 🏫 การจัดการสาขา\n\n### Overview\nกลุ่ม endpoints สำหรับการจัดการสาขาต่าง ๆ ของ English Korat รวมถึงการสร้าง แก้ไข และดูข้อมูลสาขา\n\n### Branch Features\n- 🏢 **Multi-Branch Support**: รองรับการจัดการหลายสาขา\n- 📍 **Location Management**: จัดการที่ตั้งและข้อมูลติดต่อ\n- 👥 **Staff Assignment**: กำหนดครูและพนักงานให้สาขา\n- 📊 **Branch Analytics**: สถิติและรายงานของแต่ละสาขา\n- 🎯 **Course Distribution**: จัดการคอร์สที่เปิดสอนในแต่ละสาขา\n\n### Branch Information\nแต่ละสาขาจะมีข้อมูล:\n- **Basic Info**: ชื่อสาขา, รหัสสาขา, สถานะ\n- **Contact Details**: ที่อยู่, เบอร์โทร, อีเมล\n- **Operational Info**: เวลาเปิด-ปิด, จำนวนห้องเรียน\n- **Staff Count**: จำนวนครูและพนักงาน\n- **Student Capacity**: จำนวนนักเรียนที่รองรับได้\n\n### Sample Branch Structure\n```json\n{\n  \"id\": 1,\n  \"name\": \"English Korat Central\",\n  \"code\": \"EKC001\",\n  \"address\": \"123 ถนนมิตรภาพ ตำบลในเมือง อำเภอเมือง จังหวัดนครราชสีมา 30000\",\n  \"phone\": \"044-123-456\",\n  \"email\": \"central@englishkorat.com\",\n  \"is_active\": true,\n  \"capacity\": 500,\n  \"current_students\": 342,\n  \"teacher_count\": 15,\n  \"room_count\": 8\n}\n```\n\n### Access Control\n- **Owner/Admin**: เข้าถึงได้ทุกสาขา\n- **Teacher**: เข้าถึงได้เฉพาะสาขาที่สังกัด\n- **Student**: เข้าถึงได้เฉพาะข้อมูลพื้นฐานของสาขาตัวเอง",
+			"item": [
+				{
+					"name": "Get Branches",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/branches?active=true&type=offline",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"branches"
+							],
+							"query": [
+								{
+									"key": "active",
+									"value": "true",
+									"description": "Filter by active status"
+								},
+								{
+									"key": "type",
+									"value": "offline",
+									"description": "Filter by branch type (offline, online, hybrid)"
+								}
+							]
+						},
+						"description": "Get list of branches with optional filters."
+					}
+				},
+				{
+					"name": "Create Branch",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name_en\": \"New Technology Branch\",\n  \"name_th\": \"สาขาเทคโนโลยีใหม่\",\n  \"code\": \"TECH-NEW\",\n  \"address\": \"123 Technology Road, Bangkok\",\n  \"phone\": \"044-123456\",\n  \"email\": \"techbranch@englishkorat.com\",\n  \"type\": \"offline\",\n  \"description\": \"Technology focused English learning branch\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/branches",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"branches"
+							]
+						},
+						"description": "Create a new branch. Requires admin or owner role."
+					}
+				}
+			]
+		},
+		{
+			"name": "🎓 Student Management",
+			"description": "## 🎓 การจัดการข้อมูลนักเรียน\n\n### Overview\nกลุ่ม endpoints สำหรับการจัดการข้อมูลนักเรียนแบบละเอียด รวมถึงการติดตามความก้าวหน้าและการเรียนรู้\n\n### Student Profile Features\n- 📊 **CEFR Level Tracking**: ติดตามระดับภาษาตาม Common European Framework\n- 🎯 **Learning Goals**: ตั้งเป้าหมายการเรียนรู้ส่วนบุคคล\n- 📈 **Progress Monitoring**: ติดตามความก้าวหน้าในการเรียน\n- 🏆 **Achievement Badges**: ระบบแบดจ์และรางวัล\n- 📝 **Learning Preferences**: บันทึกรูปแบบการเรียนที่ชอบ\n- 📞 **Emergency Contacts**: ข้อมูลผู้ปกครองและผู้ติดต่อฉุกเฉิน\n\n### Student Information Structure\n```json\n{\n  \"student_id\": \"STD2024001\",\n  \"user_id\": 15,\n  \"student_profile\": {\n    \"cefr_level\": \"B1\",\n    \"learning_goals\": [\"Business English\", \"TOEIC Preparation\"],\n    \"learning_style\": \"Visual\",\n    \"weak_skills\": [\"Speaking\", \"Listening\"],\n    \"strong_skills\": [\"Reading\", \"Writing\"]\n  },\n  \"emergency_contact\": {\n    \"name\": \"สมชาย ใจดี\",\n    \"relationship\": \"พ่อ\",\n    \"phone\": \"081-234-5678\",\n    \"email\": \"somchai@email.com\"\n  },\n  \"enrollment_info\": {\n    \"enrollment_date\": \"2024-01-15\",\n    \"branch_id\": 1,\n    \"current_courses\": [\"General English B1\", \"TOEIC Preparation\"],\n    \"completed_hours\": 120,\n    \"remaining_hours\": 80\n  }\n}\n```\n\n### Access Control\n- **Admin/Owner**: เข้าถึงข้อมูลนักเรียนทุกคน\n- **Teacher**: เข้าถึงนักเรียนในคอร์สที่สอน\n- **Student**: เข้าถึงข้อมูลตัวเองเท่านั้น\n\n### Key Use Cases\n1. **Enrollment Management**: จัดการการลงทะเบียนเรียน\n2. **Progress Tracking**: ติดตามความก้าวหน้า\n3. **Parent Communication**: ติดต่อผู้ปกครอง\n4. **Course Recommendations**: แนะนำคอร์สที่เหมาะสม\n5. **Performance Analytics**: วิเคราะห์ผลการเรียน",
+			"item": [
+				{
+					"name": "Get Students",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/students?page=1&limit=10&age_group=adults&cefr_level=B1&branch_id=1",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"students"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"description": "Page number"
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"description": "Items per page"
+								},
+								{
+									"key": "age_group",
+									"value": "adults",
+									"description": "Filter by age group (kids, teens, adults, seniors)"
+								},
+								{
+									"key": "cefr_level",
+									"value": "B1",
+									"description": "Filter by CEFR level (A1, A2, B1, B2, C1, C2)"
+								},
+								{
+									"key": "branch_id",
+									"value": "1",
+									"description": "Filter by branch"
+								}
+							]
+						},
+						"description": "Get paginated list of students with filters for age group, CEFR level, and branch."
+					}
+				},
+				{
+					"name": "Create Student Profile",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"user_id\": 3,\n  \"first_name\": \"John\",\n  \"last_name\": \"Doe\",\n  \"first_name_th\": \"จอห์น\",\n  \"last_name_th\": \"โด\",\n  \"date_of_birth\": \"1998-05-15\",\n  \"age\": 25,\n  \"age_group\": \"adults\",\n  \"gender\": \"male\",\n  \"nationality\": \"Thai\",\n  \"cefr_level\": \"B1\",\n  \"goals\": [\"improve_speaking\", \"business_english\"],\n  \"interests\": [\"technology\", \"travel\"],\n  \"learning_style\": \"visual\",\n  \"emergency_contact\": {\n    \"name\": \"Jane Doe\",\n    \"relationship\": \"sister\",\n    \"phone\": \"0898765432\"\n  }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/students",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"students"
+							]
+						},
+						"description": "Create a detailed student profile with personal information, learning preferences, and emergency contact."
+					}
+				}
+			]
+		},
+		{
+			"name": "👨‍🏫 Teacher Management",
+			"description": "## 👨‍🏫 การจัดการข้อมูลครู\n\n### Overview\nกลุ่ม endpoints สำหรับการจัดการข้อมูลครูและความเชี่ยวชาญ รวมถึงการติดตามผลงานและคุณวุฒิ\n\n### Teacher Profile Features\n- 🎓 **Qualifications Tracking**: ติดตามคุณวุฒิและใบรับรอง\n- 🌟 **Specializations**: ความเชี่ยวชาญด้านต่าง ๆ\n- 📚 **Course Assignment**: กำหนดคอร์สที่สอน\n- 📊 **Performance Analytics**: สถิติการสอนและผลงาน\n- 🏆 **Achievement Records**: บันทึกผลงานและรางวัล\n- 📅 **Schedule Management**: จัดการตารางสอน\n\n### Teacher Information Structure\n```json\n{\n  \"teacher_id\": \"TCH2024001\",\n  \"user_id\": 25,\n  \"teacher_profile\": {\n    \"employee_id\": \"EK-T-001\",\n    \"specializations\": [\"IELTS\", \"Business English\", \"Conversation\"],\n    \"qualifications\": [\n      {\n        \"degree\": \"Master of Arts in TESOL\",\n        \"institution\": \"Chulalongkorn University\",\n        \"year\": 2020\n      },\n      {\n        \"certification\": \"CELTA\",\n        \"issuer\": \"Cambridge English\",\n        \"expiry\": \"2026-12-31\"\n      }\n    ],\n    \"experience_years\": 5,\n    \"languages\": [\"Thai\", \"English\", \"Japanese\"],\n    \"teaching_levels\": [\"Beginner\", \"Intermediate\", \"Advanced\"]\n  },\n  \"work_info\": {\n    \"branch_id\": 1,\n    \"hire_date\": \"2022-06-01\",\n    \"employment_type\": \"Full-time\",\n    \"max_teaching_hours\": 30,\n    \"current_courses\": [\"IELTS Preparation\", \"Business English B2\"],\n    \"student_count\": 45\n  }\n}\n```\n\n### Teaching Specializations\n- **🎯 Test Preparation**: IELTS, TOEIC, TOEFL\n- **💼 Business English**: Corporate training, presentations\n- **🗣️ Conversation**: Speaking and listening skills\n- **📚 Academic English**: University preparation\n- **👶 Young Learners**: Kids and teenagers\n- **🔤 Grammar & Writing**: Language structure focus\n\n### Access Control\n- **Admin/Owner**: เข้าถึงข้อมูลครูทุกคน\n- **Teacher**: เข้าถึงข้อมูลตัวเองและนักเรียนที่สอน\n- **Student**: ดูข้อมูลพื้นฐานของครูที่สอน",
+			"item": [
+				{
+					"name": "Get Teachers",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/teachers?teacher_type=Both&active=true&branch_id=1&specialization=IELTS",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"teachers"
+							],
+							"query": [
+								{
+									"key": "teacher_type",
+									"value": "Both",
+									"description": "Filter by teacher type (Native, Non-Native, Both)"
+								},
+								{
+									"key": "active",
+									"value": "true",
+									"description": "Filter by active status"
+								},
+								{
+									"key": "branch_id",
+									"value": "1",
+									"description": "Filter by branch"
+								},
+								{
+									"key": "specialization",
+									"value": "IELTS",
+									"description": "Filter by specialization"
+								}
+							]
+						},
+						"description": "Get list of teachers with filters for type, status, branch, and specialization."
+					}
+				},
+				{
+					"name": "Create Teacher Profile",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"user_id\": 8,\n  \"first_name\": \"Jane\",\n  \"last_name\": \"Smith\",\n  \"first_name_th\": \"เจน\",\n  \"last_name_th\": \"สมิธ\",\n  \"teacher_type\": \"Both\",\n  \"specializations\": \"IELTS, TOEIC, Business English\",\n  \"experience_years\": 5,\n  \"education\": \"Master's in TESOL\",\n  \"certifications\": [\"TESOL\", \"IELTS Trainer\"],\n  \"languages\": [\"English\", \"Thai\"],\n  \"hourly_rate\": 800,\n  \"branch_id\": 1,\n  \"bio\": \"Experienced English teacher specializing in test preparation\",\n  \"teaching_style\": \"Interactive and student-centered approach\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/teachers",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"teachers"
+							]
+						},
+						"description": "Create a comprehensive teacher profile with qualifications, specializations, and teaching preferences."
+					}
+				},
+				{
+					"name": "Get Teacher Specializations",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/teachers/specializations",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"teachers",
+								"specializations"
+							]
+						},
+						"description": "Get list of all available teacher specializations for filtering and categorization."
+					}
+				}
+			]
+		},
+		{
+			"name": "🏫 Room Management",
+			"description": "## 🏫 การจัดการห้องเรียนและสิ่งอำนวยความสะดวก\n\n### Overview\nกลุ่ม endpoints สำหรับการจัดการห้องเรียน อุปกรณ์ และการจองใช้งานพื้นที่\n\n### Room Management Features\n- 🏢 **Room Inventory**: จัดการห้องเรียนทุกประเภท\n- 📅 **Booking System**: ระบบจองห้องเรียน\n- 🔧 **Equipment Tracking**: ติดตามอุปกรณ์และเครื่องมือ\n- 📊 **Capacity Planning**: วางแผนการใช้งานพื้นที่\n- 🛠️ **Maintenance Records**: บันทึกการซ่อมบำรุง\n- 📈 **Utilization Analytics**: สถิติการใช้งานห้อง\n\n### Room Types & Configurations\n- **📚 Standard Classroom**: ห้องเรียนทั่วไป (15-20 คน)\n- **💻 Computer Lab**: ห้องคอมพิวเตอร์ (10-15 คน)\n- **🎤 Speaking Lab**: ห้องฝึกพูด (8-12 คน)\n- **📺 Multimedia Room**: ห้องมัลติมีเดีย (20-30 คน)\n- **👥 Group Study**: ห้องกลุ่มย่อย (4-8 คน)\n- **🎭 Activity Room**: ห้องกิจกรรม (30-50 คน)\n\n### Room Information Structure\n```json\n{\n  \"room_id\": \"R001-B1\",\n  \"branch_id\": 1,\n  \"room_details\": {\n    \"name\": \"Classroom A1\",\n    \"type\": \"Standard Classroom\",\n    \"floor\": 2,\n    \"capacity\": 20,\n    \"area_sqm\": 45\n  },\n  \"equipment\": [\n    {\n      \"item\": \"Smart TV 65inch\",\n      \"quantity\": 1,\n      \"condition\": \"Excellent\",\n      \"last_maintenance\": \"2024-01-15\"\n    },\n    {\n      \"item\": \"Air Conditioner\",\n      \"quantity\": 2,\n      \"condition\": \"Good\",\n      \"last_maintenance\": \"2024-01-10\"\n    }\n  ],\n  \"booking_info\": {\n    \"is_available\": true,\n    \"current_booking\": null,\n    \"next_booking\": \"2024-01-20 09:00:00\",\n    \"weekly_hours_used\": 25\n  }\n}\n```\n\n### Booking & Scheduling\n- **📋 Real-time Availability**: ตรวจสอบสถานะห้องแบบ real-time\n- **⏰ Time Slot Management**: จัดการช่วงเวลาการใช้งาน\n- **🔄 Recurring Bookings**: จองแบบประจำสำหรับคอร์สเรียน\n- **📱 Mobile-friendly**: รองรับการจองผ่านมือถือ\n\n### Access Control\n- **Admin/Owner**: จัดการห้องทุกสาขา\n- **Teacher**: จองห้องในสาขาตัวเอง\n- **Student**: ดูตารางการใช้งานห้อง",
+			"item": [
+				{
+					"name": "Get Rooms",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/rooms?branch_id=1&status=available&min_capacity=8&equipment=projector",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"rooms"
+							],
+							"query": [
+								{
+									"key": "branch_id",
+									"value": "1",
+									"description": "Filter by branch"
+								},
+								{
+									"key": "status",
+									"value": "available",
+									"description": "Filter by status (available, occupied, maintenance)"
+								},
+								{
+									"key": "min_capacity",
+									"value": "8",
+									"description": "Minimum room capacity"
+								},
+								{
+									"key": "equipment",
+									"value": "projector",
+									"description": "Required equipment"
+								}
+							]
+						},
+						"description": "Get list of rooms with filters for branch, availability, capacity, and equipment."
+					}
+				},
+				{
+					"name": "Create Room",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"branch_id\": 1,\n  \"room_name\": \"Room A4\",\n  \"room_code\": \"A4\",\n  \"capacity\": 12,\n  \"room_type\": \"classroom\",\n  \"equipment\": [\"whiteboard\", \"projector\", \"air_conditioning\", \"speakers\"],\n  \"description\": \"Medium-sized classroom with modern teaching equipment\",\n  \"floor\": 2,\n  \"size_sqm\": 30\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/rooms",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"rooms"
+							]
+						},
+						"description": "Create a new room with specifications, equipment list, and capacity details."
+					}
+				},
+				{
+					"name": "Update Room Status",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"status\": \"occupied\",\n  \"notes\": \"Room occupied for IELTS speaking test\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/rooms/1/status",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"rooms",
+								"1",
+								"status"
+							]
+						},
+						"description": "Update room availability status with optional notes. Replace '1' with actual room ID."
+					}
+				}
+			]
+		},
+		{
+			"name": "📖 Course Management",
+			"description": "## 📖 การจัดการคอร์สเรียน\n\n### Overview\nกลุ่ม endpoints สำหรับการสร้างและจัดการคอร์สเรียน รวมถึงการกำหนดระดับและประเภทคอร์ส\n\n### Course Management Features\n- 📚 **Course Catalog**: จัดการหลักสูตรทั้งหมด\n- 🌐 **Bilingual Support**: รองรับเนื้อหาภาษาไทยและอังกฤษ\n- 📊 **Level Classification**: จัดระดับตาม CEFR (A1-C2)\n- 🎯 **Course Types**: แบ่งประเภทตามวัตถุประสงค์\n- 💰 **Pricing Management**: จัดการราคาและโปรโมชั่น\n- 📅 **Schedule Templates**: แม่แบบตารางเรียน\n\n### Course Categories\n- **📘 General English**: คอร์สภาษาอังกฤษทั่วไป\n  - Beginner (A1-A2)\n  - Intermediate (B1-B2)\n  - Advanced (C1-C2)\n- **📝 Test Preparation**: เตรียมสอบมาตรฐาน\n  - IELTS (Academic/General)\n  - TOEIC (Listening & Reading / Speaking & Writing)\n  - TOEFL iBT\n- **💼 Business English**: ภาษาอังกฤษเพื่อการงาน\n  - Workplace Communication\n  - Presentation Skills\n  - Business Writing\n- **🗣️ Conversation**: การสนทนา\n  - Daily Conversation\n  - Travel English\n  - Social English\n- **👶 Young Learners**: สำหรับเด็กและวัยรุ่น\n  - Kids English (6-12 years)\n  - Teen English (13-17 years)\n\n### Course Structure\n```json\n{\n  \"course_id\": \"C2024001\",\n  \"course_info\": {\n    \"title_en\": \"General English Intermediate B1\",\n    \"title_th\": \"ภาษาอังกฤษทั่วไป ระดับกลาง B1\",\n    \"description_en\": \"Comprehensive English course for intermediate learners\",\n    \"description_th\": \"คอร์สภาษาอังกฤษครอบคลุมสำหรับผู้เรียนระดับกลาง\",\n    \"level\": \"B1\",\n    \"category\": \"General English\",\n    \"duration_hours\": 60,\n    \"max_students\": 15\n  },\n  \"pricing\": {\n    \"price_per_hour\": 350,\n    \"total_price\": 21000,\n    \"discount_available\": true,\n    \"early_bird_discount\": 10\n  },\n  \"requirements\": {\n    \"prerequisite_level\": \"A2\",\n    \"age_range\": \"16+\",\n    \"materials_included\": true\n  }\n}\n```\n\n### Access Control\n- **Admin/Owner**: สร้างและแก้ไขคอร์สทั้งหมด\n- **Teacher**: ดูคอร์สที่สอน แนะนำการปรับปรุง\n- **Student**: ดูรายละเอียดคอร์สที่ลงทะเบียน",
+			"item": [
+				{
+					"name": "Create Course",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Advanced Business English\",\n  \"name_th\": \"ภาษาอังกฤษธุรกิจขั้นสูง\",\n  \"code\": \"ADV-BUS-ENG-001\",\n  \"course_type\": \"english_4skills\",\n  \"branch_id\": 1,\n  \"description\": \"Advanced English course focused on business communication skills\",\n  \"description_th\": \"คอร์สภาษาอังกฤษขั้นสูงเน้นทักษะการสื่อสารทางธุรกิจ\",\n  \"level\": \"Advanced\",\n  \"duration_hours\": 60,\n  \"price\": 15000,\n  \"max_students\": 15,\n  \"prerequisites\": [\"B2 level English\", \"Basic business knowledge\"],\n  \"learning_outcomes\": [\"Business presentation skills\", \"Negotiation in English\", \"Professional writing\"]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/courses",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"courses"
+							]
+						},
+						"description": "Create a new course with detailed information including bilingual descriptions, prerequisites, and learning outcomes."
+					}
+				}
+			]
+		},
+		{
+			"name": "🔔 Notifications",
+			"description": "## 🔔 ระบบการแจ้งเตือน\n\n### Overview\nกลุ่ม endpoints สำหรับการจัดการระบบแจ้งเตือนแบบครบถ้วน รองรับการแจ้งเตือนแบบ real-time และการจัดการสถานะการอ่าน\n\n### Notification Features\n- 📱 **Real-time Notifications**: การแจ้งเตือนแบบทันที\n- 🌐 **Bilingual Support**: แสดงผลเป็นภาษาไทยและอังกฤษ\n- 👥 **Role-based Targeting**: ส่งตาม user role\n- 📊 **Read Status Tracking**: ติดตามสถานะการอ่าน\n- 🎯 **Type Categorization**: แบ่งประเภทการแจ้งเตือน\n- 📈 **Priority Levels**: ระดับความสำคัญ\n\n### Notification Types\n- **📢 System Announcements**: ประกาศระบบทั่วไป\n- **📚 Course Updates**: อัพเดทเกี่ยวกับคอร์สเรียน\n- **📅 Schedule Changes**: การเปลี่ยนแปลงตารางเรียน\n- **💰 Payment Reminders**: แจ้งเตือนการชำระเงิน\n- **🎓 Academic Progress**: ความก้าวหน้าทางการเรียน\n- **🏆 Achievements**: ผลงานและรางวัล\n- **⚠️ System Alerts**: แจ้งเตือนระบบฉุกเฉิน\n\n### Notification Structure\n```json\n{\n  \"notification_id\": \"NOTIF2024001\",\n  \"recipient\": {\n    \"user_id\": 15,\n    \"role\": \"student\",\n    \"branch_id\": 1\n  },\n  \"content\": {\n    \"title_en\": \"Course Schedule Update\",\n    \"title_th\": \"อัพเดทตารางเรียน\",\n    \"message_en\": \"Your IELTS class has been moved to Room B2\",\n    \"message_th\": \"คลาส IELTS ของคุณย้ายไปห้อง B2\",\n    \"type\": \"schedule_change\",\n    \"priority\": \"normal\"\n  },\n  \"status\": {\n    \"is_read\": false,\n    \"read_at\": null,\n    \"created_at\": \"2024-01-20T14:30:00Z\",\n    \"expires_at\": \"2024-02-20T14:30:00Z\"\n  }\n}\n```\n\n### Delivery Methods\n- **📧 In-app Notifications**: แจ้งเตือนในแอป\n- **📧 Email Integration**: ส่งอีเมลสำรอง\n- **📱 Push Notifications**: แจ้งเตือนมือถือ (อนาคต)\n- **📺 Dashboard Alerts**: แสดงใน dashboard\n\n### Access Control\n- **Admin/Owner**: จัดการการแจ้งเตือนทั้งหมด สร้างประกาศระบบ\n- **Teacher**: รับแจ้งเตือนเกี่ยวกับการสอน ส่งแจ้งเตือนให้นักเรียน\n- **Student**: รับแจ้งเตือนส่วนตัวและคอร์สที่เรียน",
+			"item": [
+				{
+					"name": "Get Notifications",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/notifications?page=1&limit=10&read=false&type=info",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"notifications"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"description": "Page number"
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"description": "Items per page"
+								},
+								{
+									"key": "read",
+									"value": "false",
+									"description": "Filter by read status (true/false)"
+								},
+								{
+									"key": "type",
+									"value": "info",
+									"description": "Filter by type (info, warning, success, error)"
+								}
+							]
+						},
+						"description": "Get paginated list of notifications with filters for read status and type."
+					}
+				},
+				{
+					"name": "Create Notification (Admin)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"student\",\n  \"title\": \"New IELTS Course Available\",\n  \"title_th\": \"คอร์ส IELTS ใหม่มาแล้ว\",\n  \"message\": \"We have a new IELTS preparation course starting next month. Early bird discount available!\",\n  \"message_th\": \"เรามีคอร์สเตรียมสอบ IELTS ใหม่เริ่มเดือนหน้า มีส่วนลดสำหรับผู้สมัครก่อน!\",\n  \"type\": \"info\",\n  \"priority\": \"normal\",\n  \"branch_id\": 1,\n  \"expires_at\": \"2025-10-01T00:00:00Z\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/notifications",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"notifications"
+							]
+						},
+						"description": "Create a new notification for specific user roles. Supports bilingual messages and targeting by role or branch."
+					}
+				},
+				{
+					"name": "Mark Notification as Read",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/notifications/1/read",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"notifications",
+								"1",
+								"read"
+							]
+						},
+						"description": "Mark a specific notification as read. Replace '1' with actual notification ID."
+					}
+				},
+				{
+					"name": "Get Unread Count",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/notifications/unread-count",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"notifications",
+								"unread-count"
+							]
+						},
+						"description": "Get count of unread notifications for the current user."
+					}
+				}
+			]
+		},
+		{
+			"name": "📊 Log Management",
+			"description": "## 📊 ระบบจัดการ Activity Logs แบบ Enterprise\n\n### Overview\nกลุ่ม endpoints สำหรับการจัดการ activity logs แบบครบถ้วน รองรับมาตรฐาน CIA (Confidentiality, Integrity, Availability) และระบบ archiving อัตโนมัติ\n\n### Enterprise Logging Features\n- 🔐 **CIA-Compliant Security**: มาตรฐานความปลอดภัยระดับองค์กร\n  - **Confidentiality**: เข้ารหัสข้อมูลล็อก\n  - **Integrity**: ตรวจสอบความถูกต้องด้วย hash\n  - **Availability**: ระบบ backup และ redundancy\n- ⚡ **Redis Caching**: เก็บข้อมูลใน cache เพื่อประสิทธิภาพ (24h TTL)\n- 🗄️ **Auto-Archiving**: ย้ายข้อมูลเก่าไป AWS S3 อัตโนมัติ\n- 📊 **Advanced Analytics**: วิเคราะห์พฤติกรรมและสถิติ\n- 📤 **Export Capabilities**: ส่งออกเป็น CSV, JSON\n- 🔍 **Powerful Filtering**: กรองข้อมูลหลากหลายเงื่อนไข\n\n### Log Categories & Tracking\n- **🔐 Authentication**: Login, logout, token refresh\n- **👥 User Management**: CRUD operations on users\n- **📚 Academic Operations**: Course enrollment, grade updates\n- **💰 Financial**: Payment processing, billing\n- **📁 File Operations**: Upload, download, delete\n- **⚙️ System Changes**: Configuration updates\n- **🚨 Security Events**: Failed login attempts, permission violations\n\n### Multi-Tier Architecture\n```\n🌐 API Request → 🔄 Redis Cache → 💾 MySQL Database → 🗄️ S3 Archive\n     ↓              (24h TTL)      (90 days)      (Long-term)\n📱 Real-time    📊 Fast Access   📋 Active Logs   🏛️ Historical\n```\n\n### Log Structure with Security Metadata\n```json\n{\n  \"log_id\": \"LOG2024001\",\n  \"activity_data\": {\n    \"user_id\": 15,\n    \"action\": \"user_login\",\n    \"resource\": \"authentication\",\n    \"details\": \"User logged in successfully\",\n    \"ip_address\": \"192.168.1.100\",\n    \"user_agent\": \"Mozilla/5.0...\",\n    \"timestamp\": \"2024-01-20T14:30:00Z\"\n  },\n  \"security_metadata\": {\n    \"integrity_hash\": \"sha256:a1b2c3d4e5f6...\",\n    \"session_id\": \"sess_abc123\",\n    \"request_id\": \"req_xyz789\",\n    \"risk_level\": \"low\",\n    \"geolocation\": \"Thailand, Nakhon Ratchasima\"\n  },\n  \"system_info\": {\n    \"cached_until\": \"2024-01-21T14:30:00Z\",\n    \"archive_scheduled\": \"2024-04-20T14:30:00Z\",\n    \"compliance_verified\": true\n  }\n}\n```\n\n### Auto-Maintenance Features\n- **🔄 Daily Cache Flush**: ย้ายข้อมูลจาก Redis ไป Database\n- **📦 Weekly Archiving**: สร้าง ZIP files และอัปโหลดไป S3\n- **🧹 Cleanup Jobs**: ลบข้อมูลเก่าตามนีดเซต์\n- **📈 Performance Monitoring**: ติดตามประสิทธิภาพระบบ\n\n### Access Control (Admin/Owner Only)\n- **🔍 View Logs**: ดูและค้นหา activity logs\n- **📊 Generate Reports**: สร้างรายงานสถิติ\n- **📤 Export Data**: ส่งออกข้อมูลเพื่อการวิเคราะห์\n- **🗄️ Archive Management**: จัดการข้อมูลที่เก็บถาวร\n- **🔧 System Maintenance**: การบำรุงรักษาระบบ",
+			"item": [
+				{
+					"name": "Get Activity Logs",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/logs?page=1&limit=50&action=CREATE&resource=students&start_date=2025-09-01&end_date=2025-09-08",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"logs"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"description": "Page number for pagination"
+								},
+								{
+									"key": "limit",
+									"value": "50",
+									"description": "Number of items per page (max: 100)"
+								},
+								{
+									"key": "action",
+									"value": "CREATE",
+									"description": "Filter by action (CREATE, UPDATE, DELETE)"
+								},
+								{
+									"key": "resource",
+									"value": "students",
+									"description": "Filter by resource (users, students, teachers, etc.)"
+								},
+								{
+									"key": "user_id",
+									"value": "",
+									"description": "Filter by user ID",
+									"disabled": true
+								},
+								{
+									"key": "ip_address",
+									"value": "",
+									"description": "Filter by IP address",
+									"disabled": true
+								},
+								{
+									"key": "start_date",
+									"value": "2025-09-01",
+									"description": "Start date (YYYY-MM-DD)"
+								},
+								{
+									"key": "end_date",
+									"value": "2025-09-08",
+									"description": "End date (YYYY-MM-DD)"
+								}
+							]
+						},
+						"description": "Get paginated list of activity logs with comprehensive filtering options. Includes user information, detailed request metadata, and CIA-compliant security logging."
+					}
+				},
+				{
+					"name": "Get Log Statistics",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/logs/stats",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"logs",
+								"stats"
+							]
+						},
+						"description": "Get comprehensive logging statistics including action breakdown, resource usage, hourly activity patterns, top users, and recent activity summary."
+					}
+				},
+				{
+					"name": "Get Single Log Entry",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/logs/1",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"logs",
+								"1"
+							]
+						},
+						"description": "Get detailed information for a specific log entry including full request metadata, integrity hash, and security context."
+					}
+				},
+				{
+					"name": "Export Logs to CSV",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/logs/export?start_date=2025-09-01&end_date=2025-09-08",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"logs",
+								"export"
+							],
+							"query": [
+								{
+									"key": "start_date",
+									"value": "2025-09-01",
+									"description": "Export start date (YYYY-MM-DD)"
+								},
+								{
+									"key": "end_date",
+									"value": "2025-09-08",
+									"description": "Export end date (YYYY-MM-DD)"
+								}
+							]
+						},
+						"description": "Export activity logs to CSV format for compliance, auditing, or analysis purposes. Includes all log details in spreadsheet-friendly format."
+					}
+				},
+				{
+					"name": "Flush Cached Logs",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/logs/flush-cache",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"logs",
+								"flush-cache"
+							]
+						},
+						"description": "Manually flush cached logs from Redis to database. Useful for immediate log persistence or troubleshooting cache issues."
+					}
+				},
+				{
+					"name": "Delete Old Logs",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/logs/old?days=30",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"logs",
+								"old"
+							],
+							"query": [
+								{
+									"key": "days",
+									"value": "30",
+									"description": "Delete logs older than specified days (minimum: 7)"
+								}
+							]
+						},
+						"description": "Delete activity logs older than specified number of days. Use with caution - this permanently removes log data from the database."
+					}
+				}
+			]
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Auto-set base URL if not exists",
+					"if (!pm.environment.get('base_url')) {",
+					"    pm.environment.set('base_url', 'http://localhost:3000');",
+					"}",
+					"",
+					"// Log current request info",
+					"console.log('Making request to:', pm.request.url.toString());"
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Global response logging",
+					"console.log('Response status:', pm.response.code);",
+					"console.log('Response time:', pm.response.responseTime + 'ms');",
+					"",
+					"// Check for common error patterns",
+					"if (pm.response.code === 401) {",
+					"    console.log('❌ Authentication required - check if jwt_token is set');",
+					"} else if (pm.response.code === 403) {",
+					"    console.log('❌ Access forbidden - check user role permissions');",
+					"} else if (pm.response.code >= 400) {",
+					"    console.log('❌ Error response:', pm.response.text());",
+					"} else if (pm.response.code >= 200 && pm.response.code < 300) {",
+					"    console.log('✅ Request successful');",
+					"}"
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:3000",
+			"type": "string"
+		}
+	]
+}

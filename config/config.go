@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -37,8 +38,8 @@ type Config struct {
 	AppEnv string
 
 	// File Upload
-	MaxFileSize        int64
-	AllowedExtensions  string
+	MaxFileSize       int64
+	AllowedExtensions string
 
 	// Logging
 	LogLevel string
@@ -57,7 +58,25 @@ func LoadConfig() {
 	jwtExpiresStr := getEnv("JWT_EXPIRES_IN", "24h")
 	jwtExpires, err := time.ParseDuration(jwtExpiresStr)
 	if err != nil {
-		log.Fatal("Invalid JWT_EXPIRES_IN format:", err)
+		// Allow simple day/week shorthand like "7d" or "2w"
+		s := strings.TrimSpace(strings.ToLower(jwtExpiresStr))
+		if len(s) > 1 {
+			unit := s[len(s)-1]
+			numStr := s[:len(s)-1]
+			if n, err2 := strconv.Atoi(numStr); err2 == nil {
+				switch unit {
+				case 'd':
+					jwtExpires = time.Duration(n) * 24 * time.Hour
+					err = nil
+				case 'w':
+					jwtExpires = time.Duration(n*7) * 24 * time.Hour
+					err = nil
+				}
+			}
+		}
+		if err != nil {
+			log.Fatal("Invalid JWT_EXPIRES_IN format:", err)
+		}
 	}
 
 	// Parse max file size

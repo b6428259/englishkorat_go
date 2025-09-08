@@ -1,10 +1,10 @@
 package seeders
 
 import (
+	"encoding/json"
 	"englishkorat_go/database"
 	"englishkorat_go/models"
 	"englishkorat_go/utils"
-	"encoding/json"
 	"log"
 	"time"
 )
@@ -15,7 +15,7 @@ func SeedAll() {
 
 	SeedBranches()
 	SeedUsers()
-	SeedStudents() 
+	SeedStudents()
 	SeedTeachers()
 	SeedRooms()
 	SeedCourses()
@@ -163,27 +163,28 @@ func SeedStudents() {
 
 	students := []models.Student{
 		{
-			BaseModel:               models.BaseModel{ID: 1, CreatedAt: time.Date(2025, 8, 15, 2, 28, 57, 0, time.UTC)},
-			UserID:                  3,
-			FirstName:               "อลิซ",
-			LastName:                "วิลสัน",
-			Nickname:                "Alice",
-			Age:                     25,
-			AgeGroup:                "adults",
-			CEFRLevel:               "B1",
-			GrammarScore:           75,
-			SpeakingScore:          70,
-			ListeningScore:         80,
-			ReadingScore:           77,
-			WritingScore:           75,
-			LearningPreferences:    "Works in hospitality industry, wants to improve English for career advancement",
-			AvailabilitySchedule:   scheduleJSON,
-			PreferredTeacherType:   "native",
-			RegistrationStatus:     "finding_group",
-			DepositAmount:          3000,
-			PaymentStatus:          "partial",
-			LastStatusUpdate:       &time.Time{},
-			DaysWaiting:            28,
+			BaseModel:            models.BaseModel{ID: 1, CreatedAt: time.Date(2025, 8, 15, 2, 28, 57, 0, time.UTC)},
+			UserID:               3,
+			FirstName:            "อลิซ",
+			LastName:             "วิลสัน",
+			NicknameEn:           "Alice",
+			NicknameTh:           "อลิซ",
+			Age:                  25,
+			AgeGroup:             "adults",
+			CEFRLevel:            "B1",
+			GrammarScore:         75,
+			SpeakingScore:        70,
+			ListeningScore:       80,
+			ReadingScore:         77,
+			WritingScore:         75,
+			LearningPreferences:  "Works in hospitality industry, wants to improve English for career advancement",
+			AvailabilitySchedule: scheduleJSON,
+			PreferredTeacherType: "native",
+			RegistrationStatus:   "finding_group",
+			DepositAmount:        3000,
+			PaymentStatus:        "partial",
+			LastStatusUpdate:     &time.Time{},
+			DaysWaiting:          28,
 		},
 	}
 
@@ -209,9 +210,12 @@ func SeedTeachers() {
 		{
 			BaseModel:       models.BaseModel{ID: 1, CreatedAt: time.Date(2025, 8, 20, 6, 15, 59, 0, time.UTC)},
 			UserID:          1,
-			FirstName:       "Admin",
-			LastName:        "",
-			Nickname:        "Admin",
+			FirstNameEn:     "Admin",
+			FirstNameTh:     "ผู้ดูแลระบบ",
+			LastNameEn:      "",
+			LastNameTh:      "",
+			NicknameEn:      "Admin",
+			NicknameTh:      "แอดมิน",
 			TeacherType:     "Both",
 			Specializations: "Admin who can also teach",
 			Active:          true,
@@ -220,9 +224,12 @@ func SeedTeachers() {
 		{
 			BaseModel:       models.BaseModel{ID: 2, CreatedAt: time.Date(2025, 8, 20, 6, 15, 59, 0, time.UTC)},
 			UserID:          8,
-			FirstName:       "John",
-			LastName:        "Smith",
-			Nickname:        "John",
+			FirstNameEn:     "John",
+			FirstNameTh:     "จอห์น",
+			LastNameEn:      "Smith",
+			LastNameTh:      "สมิธ",
+			NicknameEn:      "John",
+			NicknameTh:      "จอห์น",
 			TeacherType:     "Both",
 			Specializations: "Adult Conversation, IELTS Preparation",
 			Certifications:  "TESOL Certificate, IELTS Trainer",

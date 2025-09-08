@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"englishkorat_go/config"
 	"fmt"
-	"image"
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
 	"mime/multipart"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -17,7 +18,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/chai2010/webp"
 	"github.com/google/uuid"
 )
 
@@ -136,7 +136,7 @@ func (s *StorageService) DeleteFile(fileURL string) error {
 func (s *StorageService) isImageFile(filename string) bool {
 	ext := strings.ToLower(s.getFileExtension(filename))
 	imageExtensions := []string{"jpg", "jpeg", "png", "gif", "bmp", "tiff"}
-	
+
 	for _, imgExt := range imageExtensions {
 		if ext == imgExt {
 			return true
@@ -156,25 +156,48 @@ func (s *StorageService) getFileExtension(filename string) string {
 
 // convertToWebP converts image to WebP format
 func (s *StorageService) convertToWebP(imageBytes []byte) ([]byte, error) {
-	// Decode the image
-	img, format, err := image.Decode(bytes.NewReader(imageBytes))
+	// Try to use external `cwebp` tool if available (avoids cgo/libwebp linking)
+	cwebpPath, err := exec.LookPath("cwebp")
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode image: %v", err)
-	}
-
-	// If already WebP, return as is
-	if format == "webp" {
+		// cwebp not installed; return original bytes (no conversion)
 		return imageBytes, nil
 	}
 
-	// Convert to WebP
-	var buf bytes.Buffer
-	err = webp.Encode(&buf, img, &webp.Options{Quality: 80})
+	// Write input to temp file
+	inFile, err := os.CreateTemp("", "img-input-*")
 	if err != nil {
-		return nil, fmt.Errorf("failed to encode to WebP: %v", err)
+		return imageBytes, nil
+	}
+	defer func() {
+		inFile.Close()
+		os.Remove(inFile.Name())
+	}()
+
+	if _, err := inFile.Write(imageBytes); err != nil {
+		return imageBytes, nil
 	}
 
-	return buf.Bytes(), nil
+	// Output temp file
+	outFile, err := os.CreateTemp("", "img-out-*.webp")
+	if err != nil {
+		return imageBytes, nil
+	}
+	outFile.Close()
+	defer os.Remove(outFile.Name())
+
+	// Run cwebp -q 80 input -o output
+	cmd := exec.Command(cwebpPath, "-q", "80", inFile.Name(), "-o", outFile.Name())
+	if err := cmd.Run(); err != nil {
+		return imageBytes, nil
+	}
+
+	// Read converted file
+	outBytes, err := os.ReadFile(outFile.Name())
+	if err != nil {
+		return imageBytes, nil
+	}
+
+	return outBytes, nil
 }
 
 // getContentType returns the MIME type for the file extension
