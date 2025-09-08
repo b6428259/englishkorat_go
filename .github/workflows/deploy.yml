@@ -58,7 +58,7 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: 22
-          script_stop: true
+          script_stop: false
           script: |
             set -euo pipefail
             IMAGE_NAME='${{ env.IMAGE_NAME }}'
@@ -85,27 +85,29 @@ jobs:
             fi
             cd "$REPO_DIR"
 
-            echo "Runtime info: user=$(whoami) pwd=$PWD writeable=$( [ -w . ] && echo yes || echo no ) date=$(date -u +%H:%M:%S)" >&2
+            if [ -w . ]; then WRITABLE=yes; else WRITABLE=no; fi
+            NOW=$(date -u +%H:%M:%S)
+            echo "Runtime info: user=$(whoami) pwd=$PWD writeable=$WRITABLE date=$NOW" >&2
             echo "Using IMAGE_NAME=$IMAGE_NAME IMAGE_TAG=$IMAGE_TAG LIGHT=$LIGHT" >&2
             echo "--- BEGIN TRACE ---" >&2
             set -x
 
             echo "Branch select on LIGHT=$LIGHT" >&2
-            case "$LIGHT" in
-              false)
-                echo "[FULL DEPLOY] Syncing repository (one-time)" >&2
-                if [ -d .git ]; then
-                  git fetch origin main && git reset --hard origin/main
-                else
-                  rm -rf tmp_clone && git clone https://github.com/${{ github.repository }} tmp_clone
-                  cp -a tmp_clone/. .
-                  rm -rf tmp_clone
-                fi
-                ;;
-              *)
-                echo "[LIGHT DEPLOY] Skipping repo sync; using existing compose + scripts" >&2
-                ;;
-            esac
+            set +e
+            TEST_VAL="$LIGHT"
+            set -e
+            if [ "$TEST_VAL" = "false" ]; then
+              echo "[FULL DEPLOY] Syncing repository (one-time)" >&2
+              if [ -d .git ]; then
+                git fetch origin main && git reset --hard origin/main
+              else
+                rm -rf tmp_clone && git clone https://github.com/${{ github.repository }} tmp_clone
+                cp -a tmp_clone/. .
+                rm -rf tmp_clone
+              fi
+            else
+              echo "[LIGHT DEPLOY] Skipping repo sync; using existing compose + scripts" >&2
+            fi
 
             # Ensure curl or wget exists for fetch & health
             if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
