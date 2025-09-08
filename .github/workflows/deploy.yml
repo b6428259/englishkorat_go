@@ -82,9 +82,21 @@ jobs:
               echo "[LIGHT DEPLOY] Skipping repo sync; using existing compose + scripts" >&2
             fi
 
-            # Ensure compose file exists
+            # Fetch compose file on light deploy if missing (single-file fetch)
+            if [ "$LIGHT" = "true" ]; then
+              if [ ! -f docker-compose.production.yml ]; then
+                RAW_URL="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/docker-compose.production.yml"
+                echo "[LIGHT DEPLOY] Fetching compose file from repository: $RAW_URL" >&2
+                (curl -fsSL "$RAW_URL" -o docker-compose.production.yml || wget -qO docker-compose.production.yml "$RAW_URL") \
+                  || { echo "ERROR: Failed to fetch docker-compose.production.yml" >&2; exit 1; }
+              else
+                echo "[LIGHT DEPLOY] Found existing docker-compose.production.yml" >&2
+              fi
+            fi
+
+            # Final check compose exists
             if [ ! -f docker-compose.production.yml ]; then
-              echo "ERROR: Missing docker-compose.production.yml (run with LIGHT_DEPLOY=false once)." >&2
+              echo "ERROR: docker-compose.production.yml still missing." >&2
               exit 1
             fi
 
