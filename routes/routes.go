@@ -22,10 +22,6 @@ func SetupRoutes(app *fiber.App) {
 
 	// API group
 	api := app.Group("/api")
-	v1 := api.Group("/v1")
-
-	// Use v1 for versioning
-	api = v1	
 
 	// Public routes (no authentication required)
 	public := api.Group("/public")
