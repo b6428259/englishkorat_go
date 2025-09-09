@@ -47,9 +47,6 @@ while :; do
     RESP_JSON=$(aws ssm get-parameters-by-path $AWS_PROFILE_OPT --with-decryption --path "$FULL_PREFIX" --recursive --region "$AWS_REGION_ENV" --max-results 10 --output json 2>&1 || true)
   fi
   
-  # Debug: show first 200 chars of response to diagnose format issues
-  [ "${DEBUG:-0}" = "1" ] && echo "DEBUG: AWS response preview: ${RESP_JSON:0:200}..." >&2
-
   # Treat whitespace-only as empty
   if ! echo "$RESP_JSON" | grep -q '[^[:space:]]'; then
     if [ $COUNT -eq 0 ] && [ -z "$NEXT_TOKEN" ]; then
@@ -69,22 +66,20 @@ while :; do
   fi
 
   # Parse parameters and next token using python3
-  PARSED=$(printf '%s' "$RESP_JSON" | python3 - <<'PY'
+  PARSED=$(echo "$RESP_JSON" | python3 -c "
 import sys, json
 try:
   data = json.load(sys.stdin)
-except Exception:
+  params = data.get('Parameters', [])
+  for p in params:
+    name = p.get('Name','')
+    value = p.get('Value','')
+    print(name + '\t' + value.replace('\n',' '))
+  nt = data.get('NextToken')
+  print('NEXT_TOKEN::' + (nt or ''))
+except Exception as e:
   print('PARSE_ERROR')
-  sys.exit(0)
-params = data.get('Parameters', [])
-for p in params:
-  name = p.get('Name','')
-  value = p.get('Value','')
-  print(name + '\t' + value.replace('\n',' '))
-nt = data.get('NextToken')
-print('NEXT_TOKEN::' + (nt or ''))
-PY
-)
+")
 
   if [ -z "$PARSED" ] || echo "$PARSED" | grep -q '^PARSE_ERROR$'; then
     ATTEMPT=$((ATTEMPT+1))
