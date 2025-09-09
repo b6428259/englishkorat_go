@@ -129,6 +129,20 @@ done
 grep -q '^PORT=' "$TMP_FILE" || echo 'PORT=3000' >> "$TMP_FILE"
 grep -q '^APP_ENV=' "$TMP_FILE" || echo 'APP_ENV=production' >> "$TMP_FILE"
 
+# Validate required keys exist before writing final .env to avoid partial/invalid files
+required_keys=(DB_PASSWORD DB_HOST DB_USER)
+missing=()
+for k in "${required_keys[@]}"; do
+  if ! grep -q "^${k}=" "$TMP_FILE" 2>/dev/null; then
+    missing+=("$k")
+  fi
+done
+if [ ${#missing[@]} -ne 0 ]; then
+  echo "ERROR: Missing required keys from SSM: ${missing[*]}" >&2
+  rm -f "$TMP_FILE"
+  exit 1
+fi
+
 mv "$TMP_FILE" .env
 echo "Written .env with $COUNT parameters (secrets hidden)." >&2
 grep -Ev 'PASSWORD=|SECRET=|KEY=' .env || true
