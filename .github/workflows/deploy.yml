@@ -117,14 +117,11 @@ jobs:
 
             # Fetch compose file on light deploy if missing (single-file fetch)
             if [ "$LIGHT" = "true" ]; then
-              if [ ! -f docker-compose.production.yml ]; then
-                RAW_URL="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/docker-compose.production.yml"
-                echo "[LIGHT DEPLOY] Fetching compose file from repository: $RAW_URL" >&2
-                (curl -fsSL "$RAW_URL" -o docker-compose.production.yml || wget -qO docker-compose.production.yml "$RAW_URL") \
-                  || { echo "ERROR: Failed to fetch docker-compose.production.yml" >&2; exit 1; }
-              else
-                echo "[LIGHT DEPLOY] Found existing docker-compose.production.yml" >&2
-              fi
+              # Always refresh compose file to get latest configuration  
+              RAW_URL="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/docker-compose.production.yml"
+              echo "[LIGHT DEPLOY] Refreshing docker-compose.production.yml from repository: $RAW_URL" >&2
+              (curl -fsSL "$RAW_URL" -o docker-compose.production.yml || wget -qO docker-compose.production.yml "$RAW_URL") \
+                || { echo "ERROR: Failed to fetch docker-compose.production.yml" >&2; exit 1; }
               # Always refresh generate-env.sh to avoid stale version on the host
               mkdir -p deploy
               RAW_GEN_URL="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/deploy/generate-env.sh"
