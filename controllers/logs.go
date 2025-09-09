@@ -293,7 +293,7 @@ func (lc *LogController) GetLogStats(c *fiber.Ctx) error {
 			CreatedAt:  log.CreatedAt,
 		}
 
-		if log.Details != nil && len(log.Details) > 0 {
+		if log.Details != nil {
 			var details map[string]interface{}
 			if err := json.Unmarshal(log.Details, &details); err == nil {
 				logResponse.Details = details

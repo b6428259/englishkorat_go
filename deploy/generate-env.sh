@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# If DEBUG=1 show commands
+[ "${DEBUG:-0}" = "1" ] && set -x
+
 # Dynamic SSM → .env generator.
 # It fetches EVERY parameter under /englishkorat/<stage>/ (default stage=production)
 # and maps the last path segment (after stage) to an uppercased env var.
@@ -12,6 +15,10 @@ BASE_PATH=${SSM_BASE_PATH:-/englishkorat}
 STAGE=${STAGE:-production}
 AWS_REGION_DEFAULT="ap-southeast-1"
 AWS_REGION_ENV=${AWS_REGION:-$AWS_REGION_DEFAULT}
+AWS_PROFILE_OPT=""
+if [ -n "${AWS_PROFILE:-}" ]; then
+  AWS_PROFILE_OPT="--profile $AWS_PROFILE"
+fi
 FULL_PREFIX="${BASE_PATH%/}/$STAGE"
 
 echo "Scanning SSM path: $FULL_PREFIX (region: $AWS_REGION_ENV)" >&2
@@ -30,14 +37,30 @@ echo "USE_SSM=true" >> "$TMP_FILE"
 # Paginate through parameters reliably using JSON parsing (python3 required)
 NEXT_TOKEN=""
 COUNT=0
+ATTEMPT=0
+MAX_ATTEMPTS=3
+SLEEP_BASE=2
 while :; do
   if [ -n "$NEXT_TOKEN" ]; then
-    RESP_JSON=$(aws ssm get-parameters-by-path --with-decryption --path "$FULL_PREFIX" --recursive --region "$AWS_REGION_ENV" --max-results 10 --next-token "$NEXT_TOKEN" --output json || true)
+    RESP_JSON=$(aws ssm get-parameters-by-path $AWS_PROFILE_OPT --with-decryption --path "$FULL_PREFIX" --recursive --region "$AWS_REGION_ENV" --max-results 10 --next-token "$NEXT_TOKEN" --output json 2>/dev/null || true)
   else
-    RESP_JSON=$(aws ssm get-parameters-by-path --with-decryption --path "$FULL_PREFIX" --recursive --region "$AWS_REGION_ENV" --max-results 10 --output json || true)
+    RESP_JSON=$(aws ssm get-parameters-by-path $AWS_PROFILE_OPT --with-decryption --path "$FULL_PREFIX" --recursive --region "$AWS_REGION_ENV" --max-results 10 --output json 2>/dev/null || true)
   fi
 
   if [ -z "$RESP_JSON" ] || [ "$RESP_JSON" = "null" ]; then
+    if [ $COUNT -eq 0 ] && [ -z "$NEXT_TOKEN" ]; then
+      ATTEMPT=$((ATTEMPT+1))
+      if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
+        WAIT=$((SLEEP_BASE * ATTEMPT))
+        echo "WARN: Empty SSM response, retrying in ${WAIT}s (attempt ${ATTEMPT}/${MAX_ATTEMPTS})" >&2
+        sleep $WAIT
+        continue
+      else
+        echo "ERROR: Empty response from SSM after retries (check credentials / region / permissions)" >&2
+        rm -f "$TMP_FILE"
+        exit 1
+      fi
+    fi
     break
   fi
 
@@ -60,6 +83,7 @@ PY
 )
 
   if [ -z "$PARSED" ]; then
+    echo "WARN: No data parsed in this page" >&2
     break
   fi
 
