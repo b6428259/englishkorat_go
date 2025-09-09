@@ -134,6 +134,8 @@ Write-Host "Establishing SSH tunnel to EC2..." -ForegroundColor Cyan
 
 $sshArgs = @(
     "-N"
+    "-o", "ExitOnForwardFailure=yes"
+    "-o", "ServerAliveInterval=60"
     # Forward local DB port to RDS host:3306 from the EC2 side
     "-L", "$LOCAL_DB_PORT`:$RDS_HOST`:$REMOTE_DB_PORT"
     # Forward Redis (still assumed to be on EC2 localhost)

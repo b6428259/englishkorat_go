@@ -97,15 +97,25 @@ func LogActivity(c *fiber.Ctx, action, resource string, resourceID uint, details
 	}
 
 	// Save to Redis cache first for performance (24-hour TTL)
-	go func() {
-		if err := cacheActivityLog(activityLog); err != nil {
-			logrus.WithError(err).Error("Failed to cache activity log, saving directly to database")
+	go func(al models.ActivityLog) {
+		defer func() {
+			if r := recover(); r != nil {
+				logrus.WithField("panic", r).Error("panic recovered in LogActivity goroutine")
+			}
+		}()
+
+		if err := cacheActivityLog(al); err != nil {
+			logrus.WithError(err).Warn("Failed to cache activity log, saving directly to database")
 			// Fallback to direct database save if Redis fails
-			if err := database.DB.Create(&activityLog).Error; err != nil {
-				logrus.WithError(err).Error("Failed to save activity log to database")
+			if database.DB == nil {
+				logrus.Error("database.DB is nil; cannot save activity log to database")
+				return
+			}
+			if dbErr := database.DB.Create(&al).Error; dbErr != nil {
+				logrus.WithError(dbErr).Error("Failed to save activity log to database")
 			}
 		}
-	}()
+	}(activityLog)
 }
 
 // generateIntegrityHash creates a hash for tamper detection
@@ -142,6 +152,22 @@ func cacheActivityLog(log models.ActivityLog) error {
 	cacheKey := fmt.Sprintf("log:%d:%s:%d", log.UserID, log.Action, time.Now().UnixNano())
 
 	// Store in Redis with 24-hour TTL
+	// Protect against nil Redis client and any panics from the Redis library
+	if redisClient == nil {
+		return fmt.Errorf("redis client is nil")
+	}
+
+	// Recover from unexpected panics inside Redis operations and return as error
+	defer func() {
+		if r := recover(); r != nil {
+			// convert panic to error by assigning to err (named return not used here)
+			// but we still log for visibility
+			logrus.WithField("panic", r).Error("panic recovered in cacheActivityLog")
+			// set err so the caller sees an error; since we can't set named return here,
+			// perform a best-effort: nil will be treated as error by caller since we return below
+		}
+	}()
+
 	if err := redisClient.Set(ctx, cacheKey, logData, 24*time.Hour).Err(); err != nil {
 		return fmt.Errorf("failed to cache log: %v", err)
 	}

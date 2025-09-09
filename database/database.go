@@ -96,9 +96,15 @@ func AutoMigrate() {
 		&models.Teacher{},
 		&models.Room{},
 		&models.Course{},
+		&models.CourseCategory{},
 		&models.ActivityLog{},
 		&models.Notification{},
 		&models.LogArchive{},
+		&models.Student_Group{},
+		&models.User_inCourse{},
+		&models.Schedules{},
+		&models.Schedule_Sessions{},
+		&models.Schedules_or_Sessions_Comment{},
 	)
 
 	if err != nil {
@@ -110,23 +116,38 @@ func AutoMigrate() {
 
 // connectRedis initializes Redis connection
 func connectRedis() {
-	RedisClient = redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%s", config.AppConfig.RedisHost, config.AppConfig.RedisPort),
-		Password: config.AppConfig.RedisPassword,
-		DB:       0, // use default DB
-	})
+	addr := fmt.Sprintf("%s:%s", config.AppConfig.RedisHost, config.AppConfig.RedisPort)
+	// Log which Redis instance we're attempting to use (do NOT log passwords)
+	log.Printf("Attempting to connect to Redis at %s", addr)
 
-	// Test Redis connection
-	ctx := context.Background()
-	_, err := RedisClient.Ping(ctx).Result()
-	if err != nil {
-		log.Printf("Redis connection failed: %v", err)
-		log.Println("Continuing without Redis - logs will be saved directly to database")
-		RedisClient = nil
-		return
+	// Retry logic: try multiple times in case tunnel/container is not ready yet
+	var lastErr error
+	maxAttempts := 8
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		rc := redis.NewClient(&redis.Options{
+			Addr:     addr,
+			Password: config.AppConfig.RedisPassword,
+			DB:       0,
+		})
+
+		ctx := context.Background()
+		_, err := rc.Ping(ctx).Result()
+		if err == nil {
+			RedisClient = rc
+			log.Printf("Redis connected successfully (%s) on attempt %d", addr, attempt)
+			return
+		}
+
+		// close client and record error then backoff
+		_ = rc.Close()
+		lastErr = err
+		log.Printf("Redis connect attempt %d failed: %v", attempt, err)
+		time.Sleep(time.Duration(attempt*attempt) * 300 * time.Millisecond)
 	}
 
-	log.Println("Redis connected successfully")
+	log.Printf("Redis connection failed to %s after %d attempts: %v", addr, maxAttempts, lastErr)
+	log.Println("Continuing without Redis - logs will be saved directly to database")
+	RedisClient = nil
 }
 
 // GetRedisClient returns the Redis client instance

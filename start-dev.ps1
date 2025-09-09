@@ -121,7 +121,7 @@ $sshArgs = @(
     # Forward local DB port to RDS host:3306 from the EC2 side
     "-L", "$LOCAL_DB_PORT`:$RDS_HOST`:$REMOTE_DB_PORT"
     # Forward Redis (still assumed to be on EC2 localhost)
-    "-L", "$LOCAL_REDIS_PORT`:localhost`:$REMOTE_REDIS_PORT"
+    "-L", "$LOCAL_REDIS_PORT`:$REDIS_HOST`:$REMOTE_REDIS_PORT"
     "-i", $EC2_KEY_PATH
     "$EC2_USER@$EC2_HOST"
 )

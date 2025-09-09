@@ -65,7 +65,7 @@ type Branch struct {
 	Code    string `json:"code" gorm:"size:50;not null;uniqueIndex"`
 	Address string `json:"address" gorm:"size:500"`
 	Phone   string `json:"phone" gorm:"size:20"`
-	Type    string `json:"type" gorm:"size:50;not null;default:'offline'"` // offline, online
+	Type    string `json:"type" gorm:"size:50;not null;default:'offline';type:enum('offline','online')"` // offline, online
 	Active  bool   `json:"active" gorm:"default:true"`
 
 	// Relationships
@@ -83,9 +83,9 @@ type User struct {
 	Email    string `json:"email" gorm:"size:255;uniqueIndex"`
 	Phone    string `json:"phone" gorm:"size:20"`
 	LineID   string `json:"line_id" gorm:"size:100"`
-	Role     string `json:"role" gorm:"size:50;not null;default:'student'"` // owner, admin, teacher, student
+	Role     string `json:"role" gorm:"size:50;not null;default:'student';type:enum('owner','admin','teacher','student')"` // owner, admin, teacher, student
 	BranchID uint   `json:"branch_id" gorm:"not null"`
-	Status   string `json:"status" gorm:"size:50;not null;default:'active'"` // active, inactive, suspended
+	Status   string `json:"status" gorm:"size:50;not null;default:'active';type:enum('active','inactive','suspended')"` // active, inactive, suspended
 	Avatar   string `json:"avatar" gorm:"size:500"`
 
 	// Relationships
@@ -109,7 +109,7 @@ type Student struct {
 	Address              string     `json:"address" gorm:"size:500"`
 	CitizenID            string     `json:"citizen_id" gorm:"size:255"` // encrypted
 	Age                  int        `json:"age"`
-	AgeGroup             string     `json:"age_group" gorm:"size:50"` // kids, teens, adults
+	AgeGroup             string     `json:"age_group" gorm:"size:50;type:enum('kids','teens','adults')"` // kids, teens, adults
 	GradeLevel           string     `json:"grade_level" gorm:"size:50"`
 	CurrentEducation     string     `json:"current_education" gorm:"size:100"`
 	CEFRLevel            string     `json:"cefr_level" gorm:"size:10"`
@@ -151,7 +151,7 @@ type Student_Group struct {
 	StudentID uint   `json:"student_id" gorm:"not null"`
 	GroupName string `json:"group_name" gorm:"size:100;not null"`
 	Level     string `json:"level" gorm:"size:50"`
-	Status    string `json:"status" gorm:"size:50;default:'active'"` // active, inactive
+	Status    string `json:"status" gorm:"size:50;default:'active';type:enum('active','inactive','suspended','full','need-feeling','empty')"` // active, inactive
 	CourseID  uint   `json:"course_id" gorm:"not null"`
 
 	// Relationships
@@ -164,8 +164,8 @@ type User_inCourse struct {
 	UserID   uint `json:"user_id" gorm:"not null"`
 	CourseID uint `json:"course_id" gorm:"not null"`
 
-	Role   string `json:"role" gorm:"size:50;not null"`           // instructor, assistant, observer, student, teacher
-	Status string `json:"status" gorm:"size:50;default:'active'"` // active, inactive, enrolled, completed, dropped
+	Role   string `json:"role" gorm:"size:50;not null;type:enum('instructor','assistant','observer','student','teacher')"`        // instructor, assistant, observer, student, teacher
+	Status string `json:"status" gorm:"size:50;default:'active';type:enum('active','inactive','enrolled','completed','dropped')"` // active, inactive, enrolled, completed, dropped
 }
 
 // Teacher model
@@ -179,7 +179,7 @@ type Teacher struct {
 	NicknameEn      string `json:"nickname_en" gorm:"size:100"`
 	NicknameTh      string `json:"nickname_th" gorm:"size:100"`
 	Nationality     string `json:"nationality" gorm:"size:100"`
-	TeacherType     string `json:"teacher_type" gorm:"size:50"` // Both, Adults, Kid, Admin Team
+	TeacherType     string `json:"teacher_type" gorm:"size:50;type:enum('Both','Adults','Kid','Admin Team')"` // Both, Adults, Kid, Admin Team
 	HourlyRate      int    `json:"hourly_rate"`
 	Specializations string `json:"specializations" gorm:"type:text"`
 	Certifications  string `json:"certifications" gorm:"type:text"`
@@ -198,7 +198,7 @@ type Room struct {
 	RoomName  string `json:"room_name" gorm:"size:100;not null"`
 	Capacity  int    `json:"capacity" gorm:"not null"`
 	Equipment JSON   `json:"equipment" gorm:"type:json"`
-	Status    string `json:"status" gorm:"size:50;not null;default:'available'"` // available, occupied, maintenance
+	Status    string `json:"status" gorm:"size:50;not null;default:'available';type:enum('available','occupied','maintenance')"` // available, occupied, maintenance
 
 	// Relationships
 	Branch Branch `json:"branch,omitempty" gorm:"foreignKey:BranchID"`
@@ -212,13 +212,26 @@ type Course struct {
 	CourseType  string `json:"course_type" gorm:"size:100"`
 	BranchID    uint   `json:"branch_id"`
 	Description string `json:"description" gorm:"type:text"`
-	Status      string `json:"status" gorm:"size:50;default:'active'"` // active, inactive
+	Status      string `json:"status" gorm:"size:50;default:'active';type:enum('active','inactive')"` // active, inactive
 	CategoryID  uint   `json:"category_id"`
 	DurationID  uint   `json:"duration_id"`
 	Level       string `json:"level" gorm:"size:100"`
 
 	// Relationships
-	Branch Branch `json:"branch,omitempty" gorm:"foreignKey:BranchID"`
+	Branch   Branch         `json:"branch,omitempty" gorm:"foreignKey:BranchID"`
+	Category CourseCategory `json:"category,omitempty" gorm:"foreignKey:CategoryID"`
+}
+
+type CourseCategory struct {
+	BaseModel
+	Name        string `json:"name" gorm:"size:100;not null;uniqueIndex"`
+	NameEn     string `json:"name_en" gorm:"size:100;not null;uniqueIndex"`
+	Description string `json:"description" gorm:"type:text"`
+	DescriptionEn string `json:"description_en" gorm:"type:text"`
+	Type string `json:"type" gorm:"size:50;type:enum('skills','business','test-prep','conversation','kids','language','other')"`
+	Level       string `json:"level" gorm:"type:enum('A1','A2','B1','B2','C1','C2','HSK1','HSK2','HSK3','HSK4','HSK5','HSK6','HSK7','HSK8','HSK9');size:50"`
+	SortOrder   int    `json:"sort_order" gorm:"default:1"`
+	Active      bool   `json:"active" gorm:"default:true"`
 }
 
 // Log model for activity tracking
@@ -244,7 +257,7 @@ type Notification struct {
 	TitleTh   string     `json:"title_th" gorm:"size:255"`
 	Message   string     `json:"message" gorm:"type:text;not null"`
 	MessageTh string     `json:"message_th" gorm:"type:text"`
-	Type      string     `json:"type" gorm:"size:50;not null"` // info, warning, error, success
+	Type      string     `json:"type" gorm:"size:50;not null;type:enum('info','warning','error','success')"` // info, warning, error, success
 	Read      bool       `json:"read" gorm:"default:false"`
 	ReadAt    *time.Time `json:"read_at"`
 
@@ -261,7 +274,7 @@ type LogArchive struct {
 	EndDate     time.Time `json:"end_date" gorm:"not null"`
 	RecordCount int       `json:"record_count" gorm:"not null"`
 	FileSize    int64     `json:"file_size" gorm:"not null"`
-	Status      string    `json:"status" gorm:"size:50;not null;default:'pending'"` // pending, completed, failed
+	Status      string    `json:"status" gorm:"size:50;not null;default:'pending';type:enum('pending','completed','failed')"` // pending, completed, failed
 	Error       string    `json:"error" gorm:"type:text"`
 }
 
@@ -272,7 +285,7 @@ type Schedule_Sessions struct {
 	End_time              time.Time `json:"end_time" gorm:"not null"`
 	Session_number        int       `json:"session_number" gorm:"not null"`
 	Week_number           int       `json:"week_number" gorm:"not null"`
-	Status                string    `json:"status" gorm:"size:50;default:'scheduled'"` // scheduled, confirmed, pending, completed, cancelled, rescheduled, no-show
+	Status                string    `json:"status" gorm:"size:50;default:'scheduled';type:enum('scheduled','confirmed','pending','completed','cancelled','rescheduled','no-show')"` // scheduled, confirmed, pending, completed, cancelled, rescheduled, no-show
 	Cencelling_Reason     string    `json:"cencelling_reason" gorm:"type:text"`
 	Is_makeup             bool      `json:"is_makeup" gorm:"default:false"` //เป็นชดเชยไหม
 	Makeup_for_session_id uint      `json:"makeup_for_session_id"`          //ชดเชยให้กับ Session ID ไหน
@@ -282,12 +295,13 @@ type Schedule_Sessions struct {
 
 type Schedules struct {
 	BaseModel
-	CourseID                uint       `json:"course_id" gorm:"not null"`
+	CourseID                uint       `json:"course_id"`
 	User_inCourseID         uint       `json:"user_in_course_id" gorm:"not null"`
+	AssignedToUserID       uint       `json:"assigned_to_teacher_id"`
 	RoomID                  uint       `json:"room_id"`
 	ScheduleName            string     `json:"schedule_name" gorm:"size:100;not null"`
-	ScheduleType            string     `json:"schedule_type" gorm:"size:50"`      // class, meeting, event, holiday, appointment
-	Recurring_pattern       string     `json:"recurring_pattern" gorm:"size:100"` // daily, weekly, bi-weekly, monthly, yearly, custom
+	ScheduleType            string     `json:"schedule_type" gorm:"size:50;type:enum('class','meeting','event','holiday','appointment')"`             // class, meeting, event, holiday, appointment
+	Recurring_pattern       string     `json:"recurring_pattern" gorm:"size:100;type:enum('daily','weekly','bi-weekly','monthly','yearly','custom')"` // daily, weekly, bi-weekly, monthly, yearly, custom
 	Total_hours             int        `json:"total_hours"`
 	Hours_per_session       int        `json:"hours_per_session"`
 	Session_per_week        int        `json:"session_per_week"`
@@ -296,14 +310,15 @@ type Schedules struct {
 	Start_date              time.Time  `json:"start_date"`
 	Estimated_end_date      time.Time  `json:"estimated_end_date"`
 	Actual_end_date         *time.Time `json:"actual_end_date"`
-	Status                  string     `json:"status" gorm:"size:50;default:'scheduled'"` // scheduled, active, paused, completed, cancelled
-	Auto_Reschedule_holiday bool       `json:"auto_reschedule" gorm:"default:false"`
+	Status                  string     `json:"status" gorm:"size:50;default:'scheduled';type:enum('scheduled','paused','completed','cancelled','assigned')"` // scheduled, active, paused, completed, cancelled
+	Auto_Reschedule_holiday bool       `json:"auto_reschedule" gorm:"default:true"`
 	Notes                   string     `json:"notes" gorm:"type:text"`
 	Admin_assigned          string     `json:"admin_assigned" gorm:"size:200"`
 
 	// Relationships
 	Course        Course        `json:"course" gorm:"foreignKey:CourseID"`
 	User_inCourse User_inCourse `json:"user_in_course" gorm:"foreignKey:User_inCourseID"`
+	AssignedTo    User          `json:"assigned_to" gorm:"foreignKey:AssignedToUserID"`
 	Room          Room          `json:"room" gorm:"foreignKey:RoomID"`
 }
 
@@ -319,4 +334,3 @@ type Schedules_or_Sessions_Comment struct {
 	Session  Schedule_Sessions `json:"session" gorm:"foreignKey:SessionID"`
 	User     User              `json:"user" gorm:"foreignKey:UserID"`
 }
-

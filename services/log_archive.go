@@ -60,7 +60,7 @@ func NewLogArchiveService() *LogArchiveService {
 // FlushCachedLogsToDatabase moves logs from Redis cache to database
 func (las *LogArchiveService) FlushCachedLogsToDatabase() error {
 	if las.redisClient == nil {
-		return fmt.Errorf("Redis client not available")
+		return fmt.Errorf("redis client not available")
 	}
 
 	ctx := context.Background()
@@ -377,12 +377,9 @@ func (las *LogArchiveService) StartLogMaintenanceScheduler() {
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
 
-		for {
-			select {
-			case <-ticker.C:
-				if err := las.FlushCachedLogsToDatabase(); err != nil {
-					logrus.WithError(err).Error("Failed to flush cached logs")
-				}
+		for range ticker.C {
+			if err := las.FlushCachedLogsToDatabase(); err != nil {
+				logrus.WithError(err).Error("Failed to flush cached logs")
 			}
 		}
 	}()
