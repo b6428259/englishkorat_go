@@ -42,10 +42,13 @@ MAX_ATTEMPTS=3
 SLEEP_BASE=2
 while :; do
   if [ -n "$NEXT_TOKEN" ]; then
-    RESP_JSON=$(aws ssm get-parameters-by-path $AWS_PROFILE_OPT --with-decryption --path "$FULL_PREFIX" --recursive --region "$AWS_REGION_ENV" --max-results 10 --next-token "$NEXT_TOKEN" --output json 2>/dev/null || true)
+    RESP_JSON=$(aws ssm get-parameters-by-path $AWS_PROFILE_OPT --with-decryption --path "$FULL_PREFIX" --recursive --region "$AWS_REGION_ENV" --max-results 10 --next-token "$NEXT_TOKEN" --output json 2>&1 || true)
   else
-    RESP_JSON=$(aws ssm get-parameters-by-path $AWS_PROFILE_OPT --with-decryption --path "$FULL_PREFIX" --recursive --region "$AWS_REGION_ENV" --max-results 10 --output json 2>/dev/null || true)
+    RESP_JSON=$(aws ssm get-parameters-by-path $AWS_PROFILE_OPT --with-decryption --path "$FULL_PREFIX" --recursive --region "$AWS_REGION_ENV" --max-results 10 --output json 2>&1 || true)
   fi
+  
+  # Debug: show first 200 chars of response to diagnose format issues
+  [ "${DEBUG:-0}" = "1" ] && echo "DEBUG: AWS response preview: ${RESP_JSON:0:200}..." >&2
 
   # Treat whitespace-only as empty
   if ! echo "$RESP_JSON" | grep -q '[^[:space:]]'; then

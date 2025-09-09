@@ -151,11 +151,14 @@ jobs:
               export AWS_DEFAULT_REGION="$AWS_REGION"
               export STAGE
               export SSM_BASE_PATH="/englishkorat"
+              export DEBUG=1  # Enable debug output to see AWS CLI response format
               echo "Preflight: checking AWS identity" >&2
               if ! aws sts get-caller-identity >/dev/null 2>&1; then
                 echo "ERROR: AWS credentials not available in this session. Aborting before env generation." >&2
                 exit 1
               fi
+              echo "Debug: Testing SSM API directly..." >&2
+              aws ssm get-parameters-by-path --path "/englishkorat/production" --recursive --region "$AWS_REGION" --max-results 3 --output json || echo "Direct SSM test failed" >&2
               if ! bash deploy/generate-env.sh; then
                 echo "ERROR: generate-env.sh failed; aborting deployment before container restart" >&2
                 exit 1
