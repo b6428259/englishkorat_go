@@ -191,6 +191,8 @@ jobs:
             echo "Launching stack (candidate tag=${IMAGE_TAG})" >&2
             # Source .env for docker-compose variable expansion
             set -a; source .env; set +a
+            # Override USE_SSM to false so app uses env vars instead of SSM
+            export USE_SSM=false
             IMAGE_TAG=${IMAGE_TAG} docker compose -f docker-compose.production.yml up -d --remove-orphans
 
             # Quick debug: show that .env was created with content
@@ -202,6 +204,10 @@ jobs:
             grep "^DB_PASSWORD=" .env >&2 || echo "DB_PASSWORD not found in .env" >&2
             echo "Testing variable expansion:" >&2
             echo "DB_PASSWORD=${DB_PASSWORD}" >&2
+            echo "USE_SSM=${USE_SSM}" >&2
+            echo "=== CONTAINER ENV CHECK ===" >&2
+            sleep 2  # Give container time to start
+            docker exec englishkorat-api printenv | grep -E "DB_PASSWORD|USE_SSM|APP_ENV" | sort >&2 || echo "Container env check failed" >&2
             echo "================================" >&2
 
             echo "Running health check: $HEALTH_URL" >&2

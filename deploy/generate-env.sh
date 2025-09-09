@@ -32,7 +32,7 @@ TMP_FILE=".env.new"
 echo "# Auto-generated $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$TMP_FILE"
 echo "AWS_REGION=$AWS_REGION_ENV" >> "$TMP_FILE"
 echo "STAGE=$STAGE" >> "$TMP_FILE"
-echo "USE_SSM=true" >> "$TMP_FILE"
+echo "USE_SSM=false" >> "$TMP_FILE"
 
 # Paginate through parameters reliably using JSON parsing (python3 required)
 NEXT_TOKEN=""
