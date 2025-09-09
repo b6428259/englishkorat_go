@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# If DEBUG=1 show commands
-[ "${DEBUG:-0}" = "1" ] && set -x
-
 # Dynamic SSM → .env generator.
 # It fetches EVERY parameter under /englishkorat/<stage>/ (default stage=production)
 # and maps the last path segment (after stage) to an uppercased env var.
@@ -144,6 +141,5 @@ if [ ${#missing[@]} -ne 0 ]; then
 fi
 
 mv "$TMP_FILE" .env
-echo "Written .env with $COUNT parameters (secrets hidden)." >&2
-grep -Ev 'PASSWORD=|SECRET=|KEY=' .env || true
+echo "Written .env with $COUNT parameters." >&2
 echo "Done." >&2

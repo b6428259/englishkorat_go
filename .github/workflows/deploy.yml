@@ -73,7 +73,7 @@ jobs:
             mkdir -p "$REPO_DIR"
             cd "$REPO_DIR"
 
-            trap 'rc=$?; set +x; echo "--- FAILURE DIAGNOSTICS (rc=$rc) ---" >&2; docker ps >&2 || true; docker logs --tail 40 englishkorat-api >&2 || true; docker logs --tail 20 ekorat-redis >&2 || true; echo "--- END DIAGNOSTICS ---" >&2; exit $rc' ERR
+            trap 'rc=$?; set +x; echo "--- FAILURE DIAGNOSTICS (rc=$rc) ---" >&2; docker ps >&2 || true; docker logs --tail 20 englishkorat-api >&2 || true; echo "--- END DIAGNOSTICS ---" >&2; exit $rc' ERR
 
             # If mkdir failed due to permission (silent because of set -e), redo with sudo and take ownership.
             if [ ! -d "$REPO_DIR" ]; then
@@ -192,21 +192,6 @@ jobs:
             export USE_SSM=false
             IMAGE_TAG=${IMAGE_TAG} docker compose -f docker-compose.production.yml up -d --remove-orphans
 
-            # Quick debug: show that .env was created with content
-            echo "=== DEBUG: Checking .env file ===" >&2
-            ls -la .env >&2 || echo "No .env file found" >&2
-            echo "First 5 lines of .env:" >&2
-            head -5 .env >&2 || echo "Cannot read .env" >&2
-            echo "DB_PASSWORD value:" >&2
-            grep "^DB_PASSWORD=" .env >&2 || echo "DB_PASSWORD not found in .env" >&2
-            echo "Testing variable expansion:" >&2
-            echo "DB_PASSWORD=${DB_PASSWORD}" >&2
-            echo "USE_SSM=${USE_SSM}" >&2
-            echo "=== CONTAINER ENV CHECK ===" >&2
-            sleep 2  # Give container time to start
-            docker exec englishkorat-api printenv | grep -E "DB_PASSWORD|USE_SSM|APP_ENV" | sort >&2 || echo "Container env check failed" >&2
-            echo "================================" >&2
-
             echo "Running health check: $HEALTH_URL" >&2
             HEALTH_OK=0
             for i in $(seq 1 15); do
@@ -224,10 +209,6 @@ jobs:
               echo "UNHEALTHY deployment - checking logs before rollback" >&2
               echo "=== API LOGS ===" >&2
               docker logs --tail 30 englishkorat-api >&2 || true
-              echo "=== API ENV VARS ===" >&2
-              docker exec englishkorat-api printenv | grep -E "DB_|REDIS_|JWT_|AWS_|PORT|APP_ENV" | sort >&2 || true
-              echo "=== REDIS LOGS ===" >&2  
-              docker logs --tail 10 ekorat-redis >&2 || true
               echo "=== CONTAINER STATUS ===" >&2
               docker ps --filter "name=englishkorat" >&2 || true
               echo "================" >&2

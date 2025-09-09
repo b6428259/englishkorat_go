@@ -1,5 +1,3 @@
-version: "3.9"
-
 # Production compose file (no inline aws cli calls inside containers)
 # Secrets are resolved on the EC2 host via deploy/generate-env.sh into .env
 
