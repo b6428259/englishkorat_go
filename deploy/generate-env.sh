@@ -47,7 +47,8 @@ while :; do
     RESP_JSON=$(aws ssm get-parameters-by-path $AWS_PROFILE_OPT --with-decryption --path "$FULL_PREFIX" --recursive --region "$AWS_REGION_ENV" --max-results 10 --output json 2>/dev/null || true)
   fi
 
-  if [ -z "$RESP_JSON" ] || [ "$RESP_JSON" = "null" ]; then
+  # Treat whitespace-only as empty
+  if ! echo "$RESP_JSON" | grep -q '[^[:space:]]'; then
     if [ $COUNT -eq 0 ] && [ -z "$NEXT_TOKEN" ]; then
       ATTEMPT=$((ATTEMPT+1))
       if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
@@ -56,7 +57,7 @@ while :; do
         sleep $WAIT
         continue
       else
-        echo "ERROR: Empty response from SSM after retries (check credentials / region / permissions)" >&2
+        echo "ERROR: Empty/whitespace response from SSM after retries (check credentials / region / permissions)" >&2
         rm -f "$TMP_FILE"
         exit 1
       fi
@@ -67,24 +68,33 @@ while :; do
   # Parse parameters and next token using python3
   PARSED=$(printf '%s' "$RESP_JSON" | python3 - <<'PY'
 import sys, json
-data = json.load(sys.stdin)
+try:
+  data = json.load(sys.stdin)
+except Exception:
+  print('PARSE_ERROR')
+  sys.exit(0)
 params = data.get('Parameters', [])
 for p in params:
-    name = p.get('Name','')
-    value = p.get('Value','')
-    # output tab separated
-    print(name + '\t' + value.replace('\n',' '))
+  name = p.get('Name','')
+  value = p.get('Value','')
+  print(name + '\t' + value.replace('\n',' '))
 nt = data.get('NextToken')
-if nt is None:
-    print('NEXT_TOKEN::')
-else:
-    print('NEXT_TOKEN::' + nt)
+print('NEXT_TOKEN::' + (nt or ''))
 PY
 )
 
-  if [ -z "$PARSED" ]; then
-    echo "WARN: No data parsed in this page" >&2
-    break
+  if [ -z "$PARSED" ] || echo "$PARSED" | grep -q '^PARSE_ERROR$'; then
+    ATTEMPT=$((ATTEMPT+1))
+    if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
+      WAIT=$((SLEEP_BASE * ATTEMPT))
+      echo "WARN: Parse error on SSM response, retrying in ${WAIT}s (attempt ${ATTEMPT}/${MAX_ATTEMPTS})" >&2
+      sleep $WAIT
+      continue
+    else
+      echo "ERROR: Failed to parse SSM response after retries" >&2
+      rm -f "$TMP_FILE"
+      exit 1
+    fi
   fi
 
   while IFS=$'\t' read -r name value; do
