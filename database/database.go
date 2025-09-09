@@ -6,6 +6,7 @@ import (
 	"englishkorat_go/models"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -66,12 +67,28 @@ func connectDatabase() {
 	sqlDB.SetMaxOpenConns(50)
 	sqlDB.SetConnMaxLifetime(55 * time.Minute)
 
-	// Auto migrate
-	AutoMigrate()
+	// Auto migrate (can be skipped with SKIP_MIGRATE=true)
+	if skip := os.Getenv("SKIP_MIGRATE"); skip == "true" {
+		log.Println("SKIP_MIGRATE=true; skipping automatic migrations")
+	} else {
+		AutoMigrate()
+	}
 }
 
 // AutoMigrate performs automatic database migration
 func AutoMigrate() {
+	if DB == nil {
+		log.Println("AutoMigrate skipped: DB is nil")
+		return
+	}
+
+	// Recover from potential panics in underlying drivers to provide clearer logs
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Recovered from panic during AutoMigrate: %v", r)
+		}
+	}()
+
 	err := DB.AutoMigrate(
 		&models.Branch{},
 		&models.User{},
