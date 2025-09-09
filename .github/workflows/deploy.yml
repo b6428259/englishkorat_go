@@ -125,14 +125,12 @@ jobs:
               else
                 echo "[LIGHT DEPLOY] Found existing docker-compose.production.yml" >&2
               fi
-              # Fetch generate-env.sh if missing so we still populate .env
-              if [ ! -x deploy/generate-env.sh ]; then
-                mkdir -p deploy
-                RAW_GEN_URL="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/deploy/generate-env.sh"
-                echo "[LIGHT DEPLOY] Fetching generate-env.sh: $RAW_GEN_URL" >&2
-                (curl -fsSL "$RAW_GEN_URL" -o deploy/generate-env.sh || wget -qO deploy/generate-env.sh "$RAW_GEN_URL") || echo "WARN: could not fetch generate-env.sh" >&2
-                chmod +x deploy/generate-env.sh 2>/dev/null || true
-              fi
+              # Always refresh generate-env.sh to avoid stale version on the host
+              mkdir -p deploy
+              RAW_GEN_URL="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/deploy/generate-env.sh"
+              echo "[LIGHT DEPLOY] Refreshing generate-env.sh: $RAW_GEN_URL" >&2
+              (curl -fsSL "$RAW_GEN_URL" -o deploy/generate-env.sh || wget -qO deploy/generate-env.sh "$RAW_GEN_URL") || echo "WARN: could not fetch generate-env.sh" >&2
+              chmod +x deploy/generate-env.sh 2>/dev/null || true
             fi
 
             # Final check compose exists
@@ -148,6 +146,11 @@ jobs:
               if [ -n "${{ secrets.AWS_ACCESS_KEY_ID }}" ]; then export AWS_ACCESS_KEY_ID='${{ secrets.AWS_ACCESS_KEY_ID }}'; fi
               if [ -n "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then export AWS_SECRET_ACCESS_KEY='${{ secrets.AWS_SECRET_ACCESS_KEY }}'; fi
               if [ -n "${{ secrets.AWS_SESSION_TOKEN }}" ]; then export AWS_SESSION_TOKEN='${{ secrets.AWS_SESSION_TOKEN }}'; fi
+              # Ensure region and stage are exported to child process (and AWS_DEFAULT_REGION for CLI)
+              export AWS_REGION
+              export AWS_DEFAULT_REGION="$AWS_REGION"
+              export STAGE
+              export SSM_BASE_PATH="/englishkorat"
               echo "Preflight: checking AWS identity" >&2
               if ! aws sts get-caller-identity >/dev/null 2>&1; then
                 echo "ERROR: AWS credentials not available in this session. Aborting before env generation." >&2
