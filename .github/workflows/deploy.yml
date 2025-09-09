@@ -189,6 +189,8 @@ jobs:
               fi
             fi
             echo "Launching stack (candidate tag=${IMAGE_TAG})" >&2
+            # Source .env for docker-compose variable expansion
+            set -a; source .env; set +a
             IMAGE_TAG=${IMAGE_TAG} docker compose -f docker-compose.production.yml up -d --remove-orphans
 
             # Quick debug: show that .env was created with content
@@ -196,6 +198,10 @@ jobs:
             ls -la .env >&2 || echo "No .env file found" >&2
             echo "First 5 lines of .env:" >&2
             head -5 .env >&2 || echo "Cannot read .env" >&2
+            echo "DB_PASSWORD value:" >&2
+            grep "^DB_PASSWORD=" .env >&2 || echo "DB_PASSWORD not found in .env" >&2
+            echo "Testing variable expansion:" >&2
+            echo "DB_PASSWORD=${DB_PASSWORD}" >&2
             echo "================================" >&2
 
             echo "Running health check: $HEALTH_URL" >&2
