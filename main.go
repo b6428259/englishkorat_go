@@ -29,6 +29,10 @@ func init() {
 	// Start log maintenance scheduler
 	logArchiveService := services.NewLogArchiveService()
 	logArchiveService.StartLogMaintenanceScheduler()
+
+	// Start schedule management services
+	scheduleManager := services.NewScheduleManager()
+	scheduleManager.Start()
 }
 
 func main() {

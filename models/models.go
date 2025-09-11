@@ -78,15 +78,18 @@ type Branch struct {
 // User model
 type User struct {
 	BaseModel
-	Username string `json:"username" gorm:"size:100;not null;uniqueIndex"`
-	Password string `json:"-" gorm:"size:255;not null"`
-	Email    string `json:"email" gorm:"size:255;uniqueIndex"`
-	Phone    string `json:"phone" gorm:"size:20"`
-	LineID   string `json:"line_id" gorm:"size:100"`
-	Role     string `json:"role" gorm:"size:50;not null;default:'student';type:enum('owner','admin','teacher','student')"` // owner, admin, teacher, student
-	BranchID uint   `json:"branch_id" gorm:"not null"`
-	Status   string `json:"status" gorm:"size:50;not null;default:'active';type:enum('active','inactive','suspended')"` // active, inactive, suspended
-	Avatar   string `json:"avatar" gorm:"size:500"`
+	Username             string     `json:"username" gorm:"size:100;not null;uniqueIndex"`
+	Password             string     `json:"-" gorm:"size:255;not null"`
+	Email                string     `json:"email" gorm:"size:255;uniqueIndex"`
+	Phone                string     `json:"phone" gorm:"size:20"`
+	LineID               string     `json:"line_id" gorm:"size:100"`
+	Role                 string     `json:"role" gorm:"size:50;not null;default:'student';type:enum('owner','admin','teacher','student')"` // owner, admin, teacher, student
+	BranchID             uint       `json:"branch_id" gorm:"not null"`
+	Status               string     `json:"status" gorm:"size:50;not null;default:'active';type:enum('active','inactive','suspended')"` // active, inactive, suspended
+	Avatar               string     `json:"avatar" gorm:"size:500"`
+	PasswordResetToken   string     `json:"-" gorm:"size:255"`      // Token for password reset
+	PasswordResetExpires *time.Time `json:"-"`                      // Token expiration time
+	PasswordResetByAdmin bool       `json:"-" gorm:"default:false"` // Flag if password was reset by admin
 
 	// Relationships
 	Branch  Branch   `json:"branch,omitempty" gorm:"foreignKey:BranchID"`
@@ -224,14 +227,14 @@ type Course struct {
 
 type CourseCategory struct {
 	BaseModel
-	Name        string `json:"name" gorm:"size:100;not null;uniqueIndex"`
-	NameEn     string `json:"name_en" gorm:"size:100;not null;uniqueIndex"`
-	Description string `json:"description" gorm:"type:text"`
+	Name          string `json:"name" gorm:"size:100;not null;uniqueIndex"`
+	NameEn        string `json:"name_en" gorm:"size:100;not null;uniqueIndex"`
+	Description   string `json:"description" gorm:"type:text"`
 	DescriptionEn string `json:"description_en" gorm:"type:text"`
-	Type string `json:"type" gorm:"size:50;type:enum('skills','business','test-prep','conversation','kids','language','other')"`
-	Level       string `json:"level" gorm:"type:enum('A1','A2','B1','B2','C1','C2','HSK1','HSK2','HSK3','HSK4','HSK5','HSK6','HSK7','HSK8','HSK9');size:50"`
-	SortOrder   int    `json:"sort_order" gorm:"default:1"`
-	Active      bool   `json:"active" gorm:"default:true"`
+	Type          string `json:"type" gorm:"size:50;type:enum('skills','business','test-prep','conversation','kids','language','other')"`
+	Level         string `json:"level" gorm:"type:enum('A1','A2','B1','B2','C1','C2','HSK1','HSK2','HSK3','HSK4','HSK5','HSK6','HSK7','HSK8','HSK9');size:50"`
+	SortOrder     int    `json:"sort_order" gorm:"default:1"`
+	Active        bool   `json:"active" gorm:"default:true"`
 }
 
 // Log model for activity tracking
@@ -279,25 +282,29 @@ type LogArchive struct {
 }
 
 type Schedule_Sessions struct {
-	ScheduleID            uint      `json:"schedule_id" gorm:"not null"`
-	Session_date          time.Time `json:"session_date" gorm:"not null"`
-	Start_time            time.Time `json:"start_time" gorm:"not null"`
-	End_time              time.Time `json:"end_time" gorm:"not null"`
-	Session_number        int       `json:"session_number" gorm:"not null"`
-	Week_number           int       `json:"week_number" gorm:"not null"`
-	Status                string    `json:"status" gorm:"size:50;default:'scheduled';type:enum('scheduled','confirmed','pending','completed','cancelled','rescheduled','no-show')"` // scheduled, confirmed, pending, completed, cancelled, rescheduled, no-show
-	Cencelling_Reason     string    `json:"cencelling_reason" gorm:"type:text"`
-	Is_makeup             bool      `json:"is_makeup" gorm:"default:false"` //เป็นชดเชยไหม
-	Makeup_for_session_id uint      `json:"makeup_for_session_id"`          //ชดเชยให้กับ Session ID ไหน
-	Notes                 string    `json:"notes" gorm:"type:text"`
+	ScheduleID        uint      `json:"schedule_id" gorm:"not null"`
+	Session_date      time.Time `json:"session_date" gorm:"not null"`
+	Start_time        time.Time `json:"start_time" gorm:"not null"`
+	End_time          time.Time `json:"end_time" gorm:"not null"`
+	Session_number    int       `json:"session_number" gorm:"not null"`
+	Week_number       int       `json:"week_number" gorm:"not null"`
+	Status            string    `json:"status" gorm:"size:50;default:'scheduled';type:enum('scheduled','confirmed','pending','completed','cancelled','rescheduled','no-show')"` // scheduled, confirmed, pending, completed, cancelled, rescheduled, no-show
+	Cencelling_Reason string    `json:"cencelling_reason" gorm:"type:text"`
+	Is_makeup         bool      `json:"is_makeup" gorm:"default:false"` //เป็นชดเชยไหม
+	// Use a nullable foreign key so normal sessions insert NULL instead of 0
+	Makeup_for_session_id *uint  `json:"makeup_for_session_id" gorm:"default:null"` // ชดเชยให้กับ Session ID ไหน
+	Notes                 string `json:"notes" gorm:"type:text"`
 	BaseModel
+
+	// Relationships
+	Schedule Schedules `json:"schedule" gorm:"foreignKey:ScheduleID"`
 }
 
 type Schedules struct {
 	BaseModel
 	CourseID                uint       `json:"course_id"`
 	User_inCourseID         uint       `json:"user_in_course_id" gorm:"not null"`
-	AssignedToUserID       uint       `json:"assigned_to_teacher_id"`
+	AssignedToUserID        uint       `json:"assigned_to_teacher_id"`
 	RoomID                  uint       `json:"room_id"`
 	ScheduleName            string     `json:"schedule_name" gorm:"size:100;not null"`
 	ScheduleType            string     `json:"schedule_type" gorm:"size:50;type:enum('class','meeting','event','holiday','appointment')"`             // class, meeting, event, holiday, appointment

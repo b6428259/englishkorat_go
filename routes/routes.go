@@ -13,12 +13,14 @@ func SetupRoutes(app *fiber.App) {
 	authController := &controllers.AuthController{}
 	userController := &controllers.UserController{}
 	courseController := &controllers.CourseController{}
+	userInCourseController := &controllers.UserInCourseController{}
 	branchController := &controllers.BranchController{}
 	studentController := &controllers.StudentController{}
 	teacherController := &controllers.TeacherController{}
 	roomController := &controllers.RoomController{}
 	notificationController := &controllers.NotificationController{}
 	logController := &controllers.LogController{}
+	scheduleController := &controllers.ScheduleController{}
 
 	// API group
 	api := app.Group("/api")
@@ -34,6 +36,7 @@ func SetupRoutes(app *fiber.App) {
 	// Authentication routes (no middleware)
 	auth := api.Group("/auth")
 	auth.Post("/login", authController.Login)
+	auth.Post("/reset-password-token", authController.ResetPasswordWithToken) // Public endpoint for token-based reset
 
 	// Protected routes (require authentication)
 	protected := api.Group("/", middleware.JWTMiddleware())
@@ -41,6 +44,11 @@ func SetupRoutes(app *fiber.App) {
 	// Profile routes (authenticated users)
 	protected.Get("/profile", authController.GetProfile)
 	protected.Put("/profile/password", authController.ChangePassword)
+
+	// Password reset routes (admin/owner only)
+	passwordReset := protected.Group("/password-reset", middleware.RequireOwnerOrAdmin())
+	passwordReset.Post("/generate-token", authController.GeneratePasswordResetToken)
+	passwordReset.Post("/reset-by-admin", authController.ResetPasswordByAdmin)
 
 	// User management routes
 	users := protected.Group("/users")
@@ -56,6 +64,10 @@ func SetupRoutes(app *fiber.App) {
 	courses.Post("/", middleware.RequireOwnerOrAdmin(), courseController.CreateCourse)
 	courses.Put("/:id", middleware.RequireOwnerOrAdmin(), courseController.UpdateCourse)
 	courses.Delete("/:id", middleware.RequireOwnerOrAdmin(), courseController.DeleteCourse)
+	// Assign users to course
+	courses.Post("/:id/assignments", middleware.RequireOwnerOrAdmin(), userInCourseController.AssignUserToCourse)
+	// Bulk assign users to course
+	courses.Post("/:id/assignments/bulk", middleware.RequireOwnerOrAdmin(), userInCourseController.AssignUsersToCourseBulk)
 
 	// Branch management routes
 	branches := protected.Group("/branches")
@@ -115,6 +127,24 @@ func SetupRoutes(app *fiber.App) {
 	logs.Delete("/old", logController.DeleteOldLogs)
 	logs.Get("/export", logController.ExportLogs)
 	logs.Post("/flush-cache", logController.FlushCachedLogs)
+
+	// Schedule management routes
+	schedules := protected.Group("/schedules")
+
+	// Schedule CRUD operations
+	schedules.Post("/", middleware.RequireOwnerOrAdmin(), scheduleController.CreateSchedule)
+	schedules.Get("/", middleware.RequireOwnerOrAdmin(), scheduleController.GetSchedules)
+	schedules.Get("/my", scheduleController.GetMySchedules)             // ดู schedule ของตัวเอง
+	schedules.Patch("/:id/confirm", scheduleController.ConfirmSchedule) // ยืนยัน schedule
+
+	// Session management
+	schedules.Get("/:id/sessions", scheduleController.GetScheduleSessions)          // ดู sessions ของ schedule
+	schedules.Patch("/sessions/:id/status", scheduleController.UpdateSessionStatus) // อัพเดทสถานะ session
+	schedules.Post("/sessions/makeup", scheduleController.CreateMakeupSession)      // สร้าง makeup session
+
+	// Comment management
+	schedules.Post("/comments", scheduleController.AddComment) // เพิ่ม comment
+	schedules.Get("/comments", scheduleController.GetComments) // ดู comments
 }
 
 // SetupStaticRoutes configures static file serving

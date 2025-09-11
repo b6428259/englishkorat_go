@@ -85,6 +85,11 @@ func JWTMiddleware() fiber.Handler {
 		// Store user info in context
 		c.Locals("user", &user)
 		c.Locals("claims", claims)
+		// Populate commonly used locals for handlers
+		c.Locals("user_id", claims.UserID)
+		c.Locals("role", claims.Role)
+		c.Locals("branch_id", claims.BranchID)
+		c.Locals("username", claims.Username)
 
 		return c.Next()
 	}

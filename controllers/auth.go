@@ -1,10 +1,13 @@
 package controllers
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"englishkorat_go/database"
 	"englishkorat_go/middleware"
 	"englishkorat_go/models"
 	"englishkorat_go/utils"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -242,5 +245,228 @@ func (ac *AuthController) ChangePassword(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{
 		"message": "Password changed successfully",
+	})
+}
+
+// GeneratePasswordResetToken generates a password reset token for a user
+func (ac *AuthController) GeneratePasswordResetToken(c *fiber.Ctx) error {
+	// Get current user (admin/owner only)
+	currentUser, err := middleware.GetCurrentUser(c)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "User not found",
+		})
+	}
+
+	// Check role permissions (admin and owner only)
+	if currentUser.Role != "admin" && currentUser.Role != "owner" {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "Only admin and owner can generate password reset tokens",
+		})
+	}
+
+	var req struct {
+		UserID uint `json:"user_id" validate:"required"`
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid request body",
+		})
+	}
+
+	// Find target user
+	var targetUser models.User
+	if err := database.DB.First(&targetUser, req.UserID).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "User not found",
+		})
+	}
+
+	// Admin cannot reset owner password
+	if currentUser.Role == "admin" && targetUser.Role == "owner" {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "Admin cannot reset owner password",
+		})
+	}
+
+	// Generate secure random token
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to generate reset token",
+		})
+	}
+	token := hex.EncodeToString(tokenBytes)
+
+	// Set token expiration (1 hour from now)
+	expiresAt := time.Now().Add(1 * time.Hour)
+
+	// Update user with reset token
+	if err := database.DB.Model(&targetUser).Updates(map[string]interface{}{
+		"password_reset_token":   token,
+		"password_reset_expires": expiresAt,
+	}).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to save reset token",
+		})
+	}
+
+	// Log the activity
+	middleware.LogActivity(c, "CREATE", "password_reset_token", targetUser.ID, fiber.Map{
+		"target_user":  targetUser.Username,
+		"generated_by": currentUser.Username,
+		"expires_at":   expiresAt,
+	})
+
+	return c.JSON(fiber.Map{
+		"message":    "Password reset token generated successfully",
+		"token":      token,
+		"expires_at": expiresAt,
+		"user": fiber.Map{
+			"id":       targetUser.ID,
+			"username": targetUser.Username,
+			"email":    targetUser.Email,
+		},
+	})
+}
+
+// ResetPasswordByAdmin allows admin/owner to reset user password directly
+func (ac *AuthController) ResetPasswordByAdmin(c *fiber.Ctx) error {
+	// Get current user (admin/owner only)
+	currentUser, err := middleware.GetCurrentUser(c)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "User not found",
+		})
+	}
+
+	// Check role permissions (admin and owner only)
+	if currentUser.Role != "admin" && currentUser.Role != "owner" {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "Only admin and owner can reset passwords",
+		})
+	}
+
+	var req struct {
+		UserID                uint   `json:"user_id" validate:"required"`
+		NewPassword           string `json:"new_password" validate:"required,min=6"`
+		RequirePasswordChange bool   `json:"require_password_change" validate:"omitempty"`
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid request body",
+		})
+	}
+
+	// Find target user
+	var targetUser models.User
+	if err := database.DB.First(&targetUser, req.UserID).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "User not found",
+		})
+	}
+
+	// Admin cannot reset owner password
+	if currentUser.Role == "admin" && targetUser.Role == "owner" {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "Admin cannot reset owner password",
+		})
+	}
+
+	// Hash new password
+	hashedPassword, err := utils.HashPassword(req.NewPassword)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to hash password",
+		})
+	}
+
+	// Update password and mark as reset by admin
+	updates := map[string]interface{}{
+		"password":                hashedPassword,
+		"password_reset_by_admin": true,
+		"password_reset_token":    nil, // Clear any existing reset token
+		"password_reset_expires":  nil,
+	}
+
+	// If require password change is set, we might want to add a flag for that
+	// For now, we'll use the password_reset_by_admin flag to indicate they should change it
+
+	if err := database.DB.Model(&targetUser).Updates(updates).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to reset password",
+		})
+	}
+
+	// Log the activity
+	middleware.LogActivity(c, "UPDATE", "password_reset_admin", targetUser.ID, fiber.Map{
+		"target_user":             targetUser.Username,
+		"reset_by":                currentUser.Username,
+		"require_password_change": req.RequirePasswordChange,
+	})
+
+	return c.JSON(fiber.Map{
+		"message": "Password reset successfully",
+		"user": fiber.Map{
+			"id":       targetUser.ID,
+			"username": targetUser.Username,
+			"email":    targetUser.Email,
+		},
+		"require_password_change": req.RequirePasswordChange,
+	})
+}
+
+// ResetPasswordWithToken allows users to reset password using a valid token
+func (ac *AuthController) ResetPasswordWithToken(c *fiber.Ctx) error {
+	var req struct {
+		Token       string `json:"token" validate:"required"`
+		NewPassword string `json:"new_password" validate:"required,min=6"`
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid request body",
+		})
+	}
+
+	// Find user with valid token
+	var user models.User
+	if err := database.DB.Where("password_reset_token = ? AND password_reset_expires > ?",
+		req.Token, time.Now()).First(&user).Error; err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid or expired reset token",
+		})
+	}
+
+	// Hash new password
+	hashedPassword, err := utils.HashPassword(req.NewPassword)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to hash password",
+		})
+	}
+
+	// Update password and clear reset token
+	if err := database.DB.Model(&user).Updates(map[string]interface{}{
+		"password":                hashedPassword,
+		"password_reset_token":    nil,
+		"password_reset_expires":  nil,
+		"password_reset_by_admin": false, // Clear admin reset flag
+	}).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to reset password",
+		})
+	}
+
+	// Log the activity
+	middleware.LogActivity(c, "UPDATE", "password_reset_token", user.ID, fiber.Map{
+		"username": user.Username,
+		"method":   "token_reset",
+	})
+
+	return c.JSON(fiber.Map{
+		"message": "Password reset successfully",
 	})
 }

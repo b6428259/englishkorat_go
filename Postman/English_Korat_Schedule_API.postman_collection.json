@@ -1,0 +1,572 @@
+{
+	"info": {
+		"_postman_id": "schedule-api-collection",
+		"name": "English Korat - Schedule API",
+		"description": "API Collection สำหรับการจัดการตารางเรียน (Schedule) ในระบบ English Korat\n\n## Features:\n- สร้างตารางเรียนและมอบหมายครู\n- ยืนยันตารางเรียนโดยครู\n- ตรวจสอบความขัดแย้งของห้องเรียน\n- สร้าง makeup sessions\n- ระบบ comment\n- การดูตารางเรียนตามบทบาท",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{auth_token}}",
+				"type": "string"
+			}
+		]
+	},
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"exec": [
+					"// Set base URL if not set",
+					"if (!pm.environment.get('base_url')) {",
+					"    pm.environment.set('base_url', 'http://localhost:8080');",
+					"}",
+					"",
+					"// Log the request for debugging",
+					"console.log('Making request to:', pm.request.url);"
+				],
+				"type": "text/javascript"
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"exec": [
+					"// Common response tests",
+					"pm.test('Response status code is valid', function () {",
+					"    pm.expect(pm.response.code).to.be.oneOf([200, 201, 400, 401, 403, 404, 500]);",
+					"});",
+					"",
+					"pm.test('Response has valid JSON', function () {",
+					"    pm.expect(() => pm.response.json()).to.not.throw();",
+					"});",
+					"",
+					"// Log response for debugging",
+					"console.log('Response:', pm.response.json());"
+				],
+				"type": "text/javascript"
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8080"
+		},
+		{
+			"key": "auth_token",
+			"value": "",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "Authentication",
+			"item": [
+				{
+					"name": "Login (Get Token)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    const response = pm.response.json();",
+									"    if (response.token) {",
+									"        pm.environment.set('auth_token', response.token);",
+									"        console.log('Token saved to environment');",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "noauth"
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"username\": \"admin\",\n    \"password\": \"password123\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						},
+						"description": "ล็อกอินเพื่อรับ JWT token สำหรับการใช้งาน API"
+					},
+					"response": []
+				}
+			],
+			"description": "Authentication endpoints สำหรับการเข้าสู่ระบบ"
+		},
+		{
+			"name": "Schedule Management",
+			"item": [
+				{
+					"name": "Create Schedule",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    if (response.schedule && response.schedule.id) {",
+									"        pm.environment.set('schedule_id', response.schedule.id);",
+									"        console.log('Schedule ID saved:', response.schedule.id);",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"course_id\": 1,\n    \"assigned_to_teacher_id\": 2,\n    \"room_id\": 1,\n    \"schedule_name\": \"English Grammar Class A\",\n    \"schedule_type\": \"class\",\n    \"recurring_pattern\": \"weekly\",\n    \"total_hours\": 20,\n    \"hours_per_session\": 2,\n    \"session_per_week\": 2,\n    \"max_students\": 15,\n    \"start_date\": \"2025-09-15T00:00:00Z\",\n    \"estimated_end_date\": \"2025-11-15T00:00:00Z\",\n    \"auto_reschedule\": true,\n    \"notes\": \"Beginning grammar class for new students\",\n    \"user_in_course_ids\": [3, 4, 5],\n    \"session_start_time\": \"09:00\",\n    \"custom_recurring_days\": [1, 3]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/schedules",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"schedules"
+							]
+						},
+						"description": "สร้างตารางเรียนใหม่ (เฉพาะ admin และ owner)\n\n**Required Role:** admin, owner\n\n**Parameters:**\n- course_id: ID ของคอร์ส\n- assigned_to_teacher_id: ID ของครูที่จะมอบหมาย\n- room_id: ID ของห้องเรียน\n- schedule_name: ชื่อตารางเรียน\n- schedule_type: ประเภท (class, meeting, event, holiday, appointment)\n- recurring_pattern: รูปแบบการเกิดซ้ำ (daily, weekly, bi-weekly, monthly, yearly, custom)\n- session_start_time: เวลาเริ่มต้น (HH:MM)\n- custom_recurring_days: วันในสัปดาห์ (0=อาทิตย์, 1=จันทร์, ...)"
+					},
+					"response": []
+				},
+				{
+					"name": "Get All Schedules (Admin)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/schedules?status=assigned&type=class&branch_id=1",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"schedules"
+							],
+							"query": [
+								{
+									"key": "status",
+									"value": "assigned",
+									"description": "Filter by status (assigned, scheduled, completed, cancelled)"
+								},
+								{
+									"key": "type",
+									"value": "class",
+									"description": "Filter by type (class, meeting, event, holiday, appointment)"
+								},
+								{
+									"key": "branch_id",
+									"value": "1",
+									"description": "Filter by branch"
+								}
+							]
+						},
+						"description": "ดูตารางเรียนทั้งหมด (เฉพาะ admin และ owner)\n\n**Required Role:** admin, owner\n\n**Query Parameters:**\n- status: กรองตามสถานะ\n- type: กรองตามประเภท\n- branch_id: กรองตามสาขา"
+					},
+					"response": []
+				},
+				{
+					"name": "Get My Schedules",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/schedules/my",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"schedules",
+								"my"
+							]
+						},
+						"description": "ดูตารางเรียนของตัวเอง\n\n**For Teachers:** ดูตารางที่ถูกมอบหมาย\n**For Students:** ดูตารางที่เข้าร่วม\n\n**Role-based Data:**\n- Students จะเห็นข้อมูลจำกัด (name, level เท่านั้น)\n- Teachers/Admin เห็นข้อมูลเต็ม"
+					},
+					"response": []
+				},
+				{
+					"name": "Confirm Schedule",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"status\": \"scheduled\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/schedules/{{schedule_id}}/confirm",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"schedules",
+								"{{schedule_id}}",
+								"confirm"
+							]
+						},
+						"description": "ยืนยันตารางเรียน (เฉพาะครูที่ถูกมอบหมาย)\n\n**Required:** ต้องเป็นครูที่ถูกมอบหมายในตารางนั้น\n\n**Status Change:** assigned → scheduled\n\n**Side Effects:**\n- ส่ง notification ให้นักเรียนในคอร์ส\n- เปิดใช้งานตารางเรียน"
+					},
+					"response": []
+				}
+			],
+			"description": "การจัดการตารางเรียนหลัก"
+		},
+		{
+			"name": "Session Management",
+			"item": [
+				{
+					"name": "Get Schedule Sessions",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    const response = pm.response.json();",
+									"    if (response.sessions && response.sessions.length > 0) {",
+									"        pm.environment.set('session_id', response.sessions[0].id);",
+									"        console.log('Session ID saved:', response.sessions[0].id);",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/schedules/{{schedule_id}}/sessions",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"schedules",
+								"{{schedule_id}}",
+								"sessions"
+							]
+						},
+						"description": "ดู sessions ของตารางเรียน\n\n**Returns:**\n- รายการ sessions ทั้งหมดในตารางเรียน\n- เรียงตามวันที่ (จากเก่าไปใหม่)\n- รวม makeup sessions"
+					},
+					"response": []
+				},
+				{
+					"name": "Update Session Status",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"status\": \"confirmed\",\n    \"notes\": \"All students are ready for the class\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/schedules/sessions/{{session_id}}/status",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"schedules",
+								"sessions",
+								"{{session_id}}",
+								"status"
+							]
+						},
+						"description": "อัพเดทสถานะของ session\n\n**Required Role:** teacher (assigned), admin, owner\n\n**Status Options:**\n- confirmed: ยืนยันการเรียน\n- completed: เรียนเสร็จแล้ว\n- cancelled: ยกเลิก\n- no-show: นักเรียนไม่มา\n\n**Side Effects:**\n- ถ้า status = confirmed จะส่ง notification ให้นักเรียน"
+					},
+					"response": []
+				},
+				{
+					"name": "Create Makeup Session",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"original_session_id\": 1,\n    \"new_session_date\": \"2025-09-20T00:00:00Z\",\n    \"new_start_time\": \"14:00\",\n    \"cancelling_reason\": \"Teacher was sick\",\n    \"new_session_status\": \"cancelled\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/schedules/sessions/makeup",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"schedules",
+								"sessions",
+								"makeup"
+							]
+						},
+						"description": "สร้าง makeup session สำหรับ session ที่ถูกยกเลิก\n\n**Required Role:** teacher (assigned), admin, owner\n\n**Restrictions:**\n- ใช้ได้เฉพาะกับ schedule type = \"class\"\n- ครูต้องเป็นคนที่ถูกมอบหมายในตารางนั้น\n\n**Process:**\n1. อัพเดท session เก่าเป็น cancelled/no-show\n2. สร้าง session ใหม่ที่วันเวลาใหม่\n3. มี flag is_makeup = true"
+					},
+					"response": []
+				}
+			],
+			"description": "การจัดการ sessions ในตารางเรียน"
+		},
+		{
+			"name": "Comments",
+			"item": [
+				{
+					"name": "Add Comment to Schedule",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"schedule_id\": 1,\n    \"comment\": \"This schedule looks good for beginners. Students are very motivated.\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/schedules/comments",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"schedules",
+								"comments"
+							]
+						},
+						"description": "เพิ่ม comment ในตารางเรียน\n\n**Parameters:**\n- schedule_id: ID ของตารางเรียน (หรือ session_id สำหรับ session)\n- comment: ข้อความ comment\n\n**Note:** ส่งได้เฉพาะ schedule_id หรือ session_id อย่างใดอย่างหนึ่ง"
+					},
+					"response": []
+				},
+				{
+					"name": "Add Comment to Session",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"session_id\": 1,\n    \"comment\": \"Great participation from all students today. Covered grammar chapter 3.\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/schedules/comments",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"schedules",
+								"comments"
+							]
+						},
+						"description": "เพิ่ม comment ใน session\n\n**Use Case:**\n- ครูบันทึกความคืบหน้าของ session\n- บันทึกปัญหาหรือข้อสังเกต\n- การติดตามผลการเรียน"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Schedule Comments",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/schedules/comments?schedule_id=1",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"schedules",
+								"comments"
+							],
+							"query": [
+								{
+									"key": "schedule_id",
+									"value": "1",
+									"description": "ID ของตารางเรียน"
+								}
+							]
+						},
+						"description": "ดู comments ของตารางเรียน\n\n**Query Parameters:**\n- schedule_id: ดู comments ของตารางเรียน\n- session_id: ดู comments ของ session\n\n**Returns:**\n- รายการ comments เรียงตามเวลา\n- รวมข้อมูลผู้แสดงความคิดเห็น"
+					},
+					"response": []
+				},
+				{
+					"name": "Get Session Comments",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/schedules/comments?session_id=1",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"schedules",
+								"comments"
+							],
+							"query": [
+								{
+									"key": "session_id",
+									"value": "1",
+									"description": "ID ของ session"
+								}
+							]
+						},
+						"description": "ดู comments ของ session\n\n**Use Case:**\n- ดูบันทึกการเรียนของแต่ละ session\n- ติดตามความคืบหน้า\n- อ่านข้อสังเกตจากครู"
+					},
+					"response": []
+				}
+			],
+			"description": "ระบบ comment สำหรับตารางเรียนและ sessions"
+		},
+		{
+			"name": "Examples & Test Cases",
+			"item": [
+				{
+					"name": "Weekly Schedule Example",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"course_id\": 1,\n    \"assigned_to_teacher_id\": 2,\n    \"room_id\": 1,\n    \"schedule_name\": \"Monday & Wednesday Grammar\",\n    \"schedule_type\": \"class\",\n    \"recurring_pattern\": \"weekly\",\n    \"total_hours\": 40,\n    \"hours_per_session\": 2,\n    \"session_per_week\": 2,\n    \"max_students\": 12,\n    \"start_date\": \"2025-09-15T00:00:00Z\",\n    \"estimated_end_date\": \"2025-12-15T00:00:00Z\",\n    \"auto_reschedule\": true,\n    \"notes\": \"Intensive grammar course for intermediate students\",\n    \"user_in_course_ids\": [3, 4, 5, 6, 7],\n    \"session_start_time\": \"10:00\",\n    \"custom_recurring_days\": [1, 3]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/schedules",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"schedules"
+							]
+						},
+						"description": "ตัวอย่างการสร้างตารางเรียนแบบ Weekly\n\n**Pattern:** วันจันทร์และพุธ เวลา 10:00-12:00\n**Duration:** 3 เดือน (40 ชั่วโมง)\n**Features:** เปิดการ reschedule อัตโนมัติสำหรับวันหยุด"
+					},
+					"response": []
+				},
+				{
+					"name": "Daily Intensive Course",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"course_id\": 2,\n    \"assigned_to_teacher_id\": 3,\n    \"room_id\": 2,\n    \"schedule_name\": \"IELTS Intensive Bootcamp\",\n    \"schedule_type\": \"class\",\n    \"recurring_pattern\": \"daily\",\n    \"total_hours\": 30,\n    \"hours_per_session\": 3,\n    \"session_per_week\": 5,\n    \"max_students\": 8,\n    \"start_date\": \"2025-10-01T00:00:00Z\",\n    \"estimated_end_date\": \"2025-10-15T00:00:00Z\",\n    \"auto_reschedule\": false,\n    \"notes\": \"Intensive IELTS preparation - weekdays only\",\n    \"user_in_course_ids\": [8, 9, 10],\n    \"session_start_time\": \"13:00\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/schedules",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"schedules"
+							]
+						},
+						"description": "ตัวอย่างคอร์สเข้มข้น\n\n**Pattern:** ทุกวัน จันทร์-ศุกร์\n**Duration:** 2 สัปดาห์\n**Intensity:** 3 ชั่วโมง/วัน\n**Target:** เตรียมสอบ IELTS"
+					},
+					"response": []
+				},
+				{
+					"name": "Teacher Meeting Schedule",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"course_id\": 1,\n    \"assigned_to_teacher_id\": 2,\n    \"room_id\": 3,\n    \"schedule_name\": \"Monthly Teacher Meeting\",\n    \"schedule_type\": \"meeting\",\n    \"recurring_pattern\": \"monthly\",\n    \"total_hours\": 12,\n    \"hours_per_session\": 2,\n    \"session_per_week\": 1,\n    \"max_students\": 20,\n    \"start_date\": \"2025-09-30T00:00:00Z\",\n    \"estimated_end_date\": \"2026-03-30T00:00:00Z\",\n    \"auto_reschedule\": true,\n    \"notes\": \"Monthly staff meeting to discuss curriculum and progress\",\n    \"user_in_course_ids\": [2, 3, 4],\n    \"session_start_time\": \"16:00\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/schedules",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"schedules"
+							]
+						},
+						"description": "ตัวอย่างการจัดประชุมครู\n\n**Type:** meeting (ไม่ต้องตรวจสอบ room conflict)\n**Pattern:** รายเดือน\n**Participants:** เฉพาะครูและผู้บริหาร"
+					},
+					"response": []
+				}
+			],
+			"description": "ตัวอย่างการใช้งานในสถานการณ์ต่างๆ"
+		}
+	]
+}
