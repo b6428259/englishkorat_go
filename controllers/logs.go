@@ -437,7 +437,7 @@ func (lc *LogController) ExportLogs(c *fiber.Ctx) error {
 		}
 
 		details := ""
-		if log.Details != nil && len(log.Details) > 0 {
+		if log.Details != nil {
 			details = string(log.Details)
 		}
 
