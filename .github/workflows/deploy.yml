@@ -161,6 +161,18 @@ jobs:
               echo "WARN: deploy/generate-env.sh not found or not executable; using existing .env" >&2
             fi
 
+            # Pre-deploy: remove known conflicting containers that would block compose up
+            # (safe: attempt removal but continue on failure). This addresses errors like
+            # "The container name "/ekorat-redis" is already in use by container ...".
+            CONFLICTS_TO_CHECK=("ekorat-redis")
+            for CN in "${CONFLICTS_TO_CHECK[@]}"; do
+              if docker ps -a --format '{{.Names}}' | grep -xq "$CN"; then
+                echo "[PRE-CLEAN] Found existing container named '$CN' - removing to avoid name conflict"
+                # attempt stop+remove; ignore errors so deployment can continue
+                docker rm -f "$CN" || true
+              fi
+            done
+
             # Determine previous tag for rollback
             PREVIOUS_TAG=""
             if [ -f "$LAST_TAG_FILE" ]; then
