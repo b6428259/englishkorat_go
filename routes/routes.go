@@ -23,6 +23,7 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	notificationController := &controllers.NotificationController{}
 	logController := &controllers.LogController{}
 	scheduleController := &controllers.ScheduleController{}
+	groupController := &controllers.GroupController{}
 	wsController := controllers.NewWebSocketController(wsHub)
 
 	// API group
@@ -173,6 +174,15 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 
 	// Calendar endpoint
 	schedules.Get("/calendar", middleware.RequireTeacherOrAbove(), scheduleController.GetCalendarView)
+
+	// Group management routes
+	groups := protected.Group("/groups")
+	groups.Get("/", middleware.RequireTeacherOrAbove(), groupController.GetGroups)
+	groups.Get("/:id", middleware.RequireTeacherOrAbove(), groupController.GetGroup)
+	groups.Post("/", middleware.RequireOwnerOrAdmin(), groupController.CreateGroup)
+	groups.Post("/:id/members", middleware.RequireOwnerOrAdmin(), groupController.AddMemberToGroup)
+	groups.Delete("/:id/members/:student_id", middleware.RequireOwnerOrAdmin(), groupController.RemoveMemberFromGroup)
+	groups.Patch("/:id/payment-status", middleware.RequireOwnerOrAdmin(), groupController.UpdateGroupPaymentStatus)
 
 	// WebSocket routes
 	ws := protected.Group("/ws")
