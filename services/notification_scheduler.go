@@ -97,26 +97,56 @@ func (ns *NotificationScheduler) hasNotificationBeenSent(sessionID uint, minutes
 func (ns *NotificationScheduler) sendUpcomingClassNotification(session models.Schedule_Sessions, minutes int, timeLabel string) {
 	// ดึงข้อมูล schedule
 	var schedule models.Schedules
-	if err := ns.db.Preload("Course").First(&schedule, session.ScheduleID).Error; err != nil {
+	if err := ns.db.Preload("Group.Course").First(&schedule, session.ScheduleID).Error; err != nil {
 		fmt.Printf("Error fetching schedule for session %d: %v\n", session.ID, err)
 		return
 	}
 
 	// ดึงรายชื่อผู้เข้าร่วม
 	var users []models.User
-	err := ns.db.Table("users").
-		Joins("JOIN user_in_courses ON user_in_courses.user_id = users.id").
-		Where("user_in_courses.course_id = ?", schedule.CourseID).
-		Find(&users).Error
-	if err != nil {
-		fmt.Printf("Error fetching users for course %d: %v\n", schedule.CourseID, err)
-		return
+	
+	// For class schedules - get users from group members
+	if schedule.GroupID != nil {
+		var groupMembers []models.GroupMember
+		err := ns.db.Preload("Student.User").Where("group_id = ?", *schedule.GroupID).Find(&groupMembers).Error
+		if err != nil {
+			fmt.Printf("Error fetching group members for group %d: %v\n", *schedule.GroupID, err)
+			return
+		}
+		
+		for _, member := range groupMembers {
+			if member.Student.UserID != nil {
+				var user models.User
+				if err := ns.db.First(&user, *member.Student.UserID).Error; err == nil {
+					users = append(users, user)
+				}
+			}
+		}
+	} else {
+		// For event/appointment schedules - get participants
+		var participants []models.ScheduleParticipant
+		err := ns.db.Preload("User").Where("schedule_id = ?", schedule.ID).Find(&participants).Error
+		if err != nil {
+			fmt.Printf("Error fetching participants for schedule %d: %v\n", schedule.ID, err)
+			return
+		}
+		
+		for _, participant := range participants {
+			users = append(users, participant.User)
+		}
 	}
 
-	// เพิ่มครูที่ถูก assign
-	var assignedTeacher models.User
-	if err := ns.db.First(&assignedTeacher, schedule.AssignedToUserID).Error; err == nil {
-		users = append(users, assignedTeacher)
+	// เพิ่มครูที่ถูก assign (ใช้ default teacher หรือ teacher specific สำหรับ session)
+	teacherID := session.AssignedTeacherID
+	if teacherID == nil {
+		teacherID = schedule.DefaultTeacherID
+	}
+	
+	if teacherID != nil {
+		var assignedTeacher models.User
+		if err := ns.db.First(&assignedTeacher, *teacherID).Error; err == nil {
+			users = append(users, assignedTeacher)
+		}
 	}
 
 	// ส่ง notification ผ่าน service (รองรับ queue และ websocket broadcast)
@@ -174,19 +204,43 @@ func (ns *NotificationScheduler) SendDailyScheduleReminder() {
 	for _, session := range sessions {
 		// ดึงรายชื่อผู้เข้าร่วม
 		var users []models.User
-		err := ns.db.Table("users").
-			Joins("JOIN user_in_courses ON user_in_courses.user_id = users.id").
-			Where("user_in_courses.course_id = ?", session.Schedule.CourseID).
-			Find(&users).Error
-
-		if err != nil {
-			continue
+		
+		// For class schedules - get users from group members
+		if session.Schedule.GroupID != nil {
+			var groupMembers []models.GroupMember
+			err := ns.db.Preload("Student.User").Where("group_id = ?", *session.Schedule.GroupID).Find(&groupMembers).Error
+			if err == nil {
+				for _, member := range groupMembers {
+					if member.Student.UserID != nil {
+						var user models.User
+						if err := ns.db.First(&user, *member.Student.UserID).Error; err == nil {
+							users = append(users, user)
+						}
+					}
+				}
+			}
+		} else {
+			// For event/appointment schedules - get participants
+			var participants []models.ScheduleParticipant
+			err := ns.db.Preload("User").Where("schedule_id = ?", session.Schedule.ID).Find(&participants).Error
+			if err == nil {
+				for _, participant := range participants {
+					users = append(users, participant.User)
+				}
+			}
 		}
 
-		// เพิ่มครูที่ถูก assign
-		var assignedTeacher models.User
-		if err := ns.db.First(&assignedTeacher, session.Schedule.AssignedToUserID).Error; err == nil {
-			users = append(users, assignedTeacher)
+		// เพิ่มครูที่ถูก assign (ใช้ default teacher หรือ teacher specific สำหรับ session)
+		teacherID := session.AssignedTeacherID
+		if teacherID == nil {
+			teacherID = session.Schedule.DefaultTeacherID
+		}
+		
+		if teacherID != nil {
+			var assignedTeacher models.User
+			if err := ns.db.First(&assignedTeacher, *teacherID).Error; err == nil {
+				users = append(users, assignedTeacher)
+			}
 		}
 
 		for _, user := range users {
