@@ -105,6 +105,7 @@ func AutoMigrate() {
 		&models.Schedules{},
 		&models.Schedule_Sessions{},
 		&models.Schedules_or_Sessions_Comment{},
+		&models.LineGroup{},
 	)
 
 	if err != nil {

@@ -9,6 +9,7 @@ require (
 	github.com/golang-jwt/jwt/v4 v4.5.0
 	github.com/google/uuid v1.5.0
 	github.com/joho/godotenv v1.5.1
+	github.com/line/line-bot-sdk-go v7.8.0+incompatible
 	github.com/sirupsen/logrus v1.9.3
 	golang.org/x/crypto v0.17.0
 	gorm.io/driver/mysql v1.5.2
