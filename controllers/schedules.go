@@ -300,37 +300,307 @@ func (sc *ScheduleController) GetMySchedules(c *fiber.Ctx) error {
 	})
 }
 
-// GetTeachersSchedules - ดูตารางของ teacher ทั้งหมด ตามช่วงวันที่
-// TODO: Enhanced implementation for Group-based model
+// GetTeachersSchedules - Enhanced implementation for Group-based model
 func (sc *ScheduleController) GetTeachersSchedules(c *fiber.Ctx) error {
-	// Basic implementation - return simple schedule list for now
-	// This can be enhanced later with full calendar functionality
+	// Parse query parameters
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
+	teacherID := c.Query("teacher_id")
+	branchID := c.Query("branch_id")
 	
-	var schedules []models.Schedules
-	if err := database.DB.Preload("Group.Course").Preload("DefaultTeacher").Preload("DefaultRoom").Find(&schedules).Error; err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch schedules"})
+	// Build query for schedules with sessions
+	query := database.DB.Table("schedules").
+		Select(`schedules.*, 
+			   schedule_sessions.session_date,
+			   schedule_sessions.start_time,
+			   schedule_sessions.end_time,
+			   schedule_sessions.status as session_status,
+			   schedule_sessions.id as session_id`).
+		Joins("LEFT JOIN schedule_sessions ON schedules.id = schedule_sessions.schedule_id").
+		Where("schedules.schedule_type = ? AND schedules.status IN ?", "class", []string{"scheduled", "assigned"})
+
+	// Apply filters
+	if startDate != "" && endDate != "" {
+		query = query.Where("schedule_sessions.session_date BETWEEN ? AND ?", startDate, endDate)
+	}
+	
+	if teacherID != "" {
+		query = query.Where("schedules.default_teacher_id = ? OR schedule_sessions.assigned_teacher_id = ?", teacherID, teacherID)
+	}
+
+	// Filter by branch through group's course
+	if branchID != "" {
+		query = query.Joins("LEFT JOIN groups ON schedules.group_id = groups.id").
+			Joins("LEFT JOIN courses ON groups.course_id = courses.id").
+			Where("courses.branch_id = ?", branchID)
+	}
+
+	// Get raw results
+	type ScheduleSession struct {
+		models.Schedules
+		SessionDate   *time.Time `json:"session_date"`
+		StartTime     *time.Time `json:"start_time"`
+		EndTime       *time.Time `json:"end_time"`
+		SessionStatus *string    `json:"session_status"`
+		SessionID     *uint      `json:"session_id"`
+	}
+
+	var results []ScheduleSession
+	if err := query.Order("schedule_sessions.session_date ASC, schedule_sessions.start_time ASC").Find(&results).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch teacher schedules"})
+	}
+
+	// Group sessions by schedule and preload relationships
+	scheduleMap := make(map[uint]*models.Schedules)
+	sessionMap := make(map[uint][]models.Schedule_Sessions)
+
+	for _, result := range results {
+		if _, exists := scheduleMap[result.ID]; !exists {
+			scheduleMap[result.ID] = &result.Schedules
+		}
+
+		if result.SessionID != nil {
+			session := models.Schedule_Sessions{
+				BaseModel:    models.BaseModel{ID: *result.SessionID},
+				ScheduleID:   result.ID,
+				Session_date: *result.SessionDate,
+				Start_time:   *result.StartTime,
+				End_time:     *result.EndTime,
+				Status:       *result.SessionStatus,
+			}
+			sessionMap[result.ID] = append(sessionMap[result.ID], session)
+		}
+	}
+
+	// Preload relationships for schedules
+	scheduleIDs := make([]uint, 0, len(scheduleMap))
+	for id := range scheduleMap {
+		scheduleIDs = append(scheduleIDs, id)
+	}
+
+	var schedulesWithRel []models.Schedules
+	if len(scheduleIDs) > 0 {
+		if err := database.DB.Where("id IN ?", scheduleIDs).
+			Preload("Group.Course").
+			Preload("Group.Members.Student").
+			Preload("DefaultTeacher").
+			Preload("DefaultRoom").
+			Find(&schedulesWithRel).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to load schedule relationships"})
+		}
+	}
+
+	// Build response
+	response := make([]map[string]interface{}, 0, len(schedulesWithRel))
+	for _, schedule := range schedulesWithRel {
+		scheduleData := map[string]interface{}{
+			"schedule": schedule,
+			"sessions": sessionMap[schedule.ID],
+		}
+		response = append(response, scheduleData)
 	}
 
 	return c.JSON(fiber.Map{
-		"schedules": schedules,
-		"message": "Basic schedule list - full calendar view to be implemented",
+		"success":   true,
+		"data":      response,
+		"total":     len(response),
+		"filters": map[string]interface{}{
+			"start_date": startDate,
+			"end_date":   endDate,
+			"teacher_id": teacherID,
+			"branch_id":  branchID,
+		},
 	})
 }
 
-// GetCalendarView - calendar data for sessions (and optional holidays/students)
-// TODO: Enhanced implementation for Group-based model
+// GetCalendarView - Enhanced implementation for Group-based model
 func (sc *ScheduleController) GetCalendarView(c *fiber.Ctx) error {
-	// Basic implementation - return simple session list for now
-	// This can be enhanced later with full calendar functionality
-	
+	// Parse query parameters
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
+	viewType := c.Query("view", "month") // month, week, day
+	userRole := c.Locals("role").(string)
+	userID := c.Locals("user_id").(uint)
+	branchID := c.Query("branch_id")
+	includeHolidays := c.Query("include_holidays", "false") == "true"
+
+	// Default date range if not provided
+	if startDate == "" || endDate == "" {
+		now := time.Now()
+		switch viewType {
+		case "week":
+			startDate = now.AddDate(0, 0, -int(now.Weekday())).Format("2006-01-02")
+			endDate = now.AddDate(0, 0, 6-int(now.Weekday())).Format("2006-01-02")
+		case "day":
+			startDate = now.Format("2006-01-02")
+			endDate = now.Format("2006-01-02")
+		default: // month
+			startDate = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Format("2006-01-02")
+			endDate = time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, now.Location()).Format("2006-01-02")
+		}
+	}
+
+	// Build query for sessions
+	query := database.DB.Model(&models.Schedule_Sessions{}).
+		Where("session_date BETWEEN ? AND ?", startDate, endDate).
+		Where("status NOT IN ?", []string{"cancelled", "no-show"})
+
+	// Apply role-based filtering
+	if userRole == "teacher" {
+		// Teachers see only their assigned sessions
+		query = query.Joins("JOIN schedules ON schedule_sessions.schedule_id = schedules.id").
+			Where("schedules.default_teacher_id = ? OR schedule_sessions.assigned_teacher_id = ?", userID, userID)
+	} else if userRole == "student" {
+		// Students see only their group sessions
+		query = query.Joins("JOIN schedules ON schedule_sessions.schedule_id = schedules.id").
+			Joins("JOIN groups ON schedules.group_id = groups.id").
+			Joins("JOIN group_members ON group_members.group_id = groups.id").
+			Joins("JOIN students ON students.id = group_members.student_id").
+			Where("students.user_id = ?", userID)
+	}
+
+	// Admin/Owner can filter by branch
+	if (userRole == "admin" || userRole == "owner") && branchID != "" {
+		query = query.Joins("JOIN schedules ON schedule_sessions.schedule_id = schedules.id").
+			Joins("LEFT JOIN groups ON schedules.group_id = groups.id").
+			Joins("LEFT JOIN courses ON groups.course_id = courses.id").
+			Where("courses.branch_id = ?", branchID)
+	}
+
+	// Get sessions with relationships
 	var sessions []models.Schedule_Sessions
-	if err := database.DB.Preload("Schedule.Group.Course").Preload("AssignedTeacher").Preload("Room").Find(&sessions).Error; err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch sessions"})
+	if err := query.Preload("Schedule.Group.Course").
+		Preload("Schedule.Group.Members.Student").
+		Preload("AssignedTeacher").
+		Preload("Schedule.DefaultTeacher").
+		Preload("Room").
+		Order("session_date ASC, start_time ASC").
+		Find(&sessions).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch calendar sessions"})
+	}
+
+	// Build calendar events
+	events := make([]map[string]interface{}, 0, len(sessions))
+	for _, session := range sessions {
+		// Determine teacher for the session
+		var teacher *models.User
+		if session.AssignedTeacher != nil {
+			teacher = session.AssignedTeacher
+		} else if session.Schedule.DefaultTeacher != nil {
+			teacher = session.Schedule.DefaultTeacher
+		}
+
+		// Build participants list
+		participants := make([]map[string]interface{}, 0)
+		if session.Schedule.Group != nil {
+			for _, member := range session.Schedule.Group.Members {
+				participants = append(participants, map[string]interface{}{
+					"id":              member.Student.ID,
+					"name":            fmt.Sprintf("%s %s", member.Student.FirstName, member.Student.LastName),
+					"nickname":        member.Student.NicknameEn,
+					"payment_status":  member.PaymentStatus,
+				})
+			}
+		}
+
+		event := map[string]interface{}{
+			"id":           session.ID,
+			"schedule_id":  session.ScheduleID,
+			"title":        session.Schedule.ScheduleName,
+			"date":         session.Session_date.Format("2006-01-02"),
+			"start_time":   session.Start_time.Format("15:04"),
+			"end_time":     session.End_time.Format("15:04"),
+			"status":       session.Status,
+			"session_number": session.Session_number,
+			"week_number":  session.Week_number,
+			"is_makeup":    session.Is_makeup,
+			"type":         "class",
+			"teacher": map[string]interface{}{
+				"id":       nil,
+				"name":     "",
+				"username": "",
+			},
+			"room": map[string]interface{}{
+				"id":   nil,
+				"name": "",
+			},
+			"course": map[string]interface{}{
+				"name":  "",
+				"level": "",
+			},
+			"participants": participants,
+		}
+
+		// Add teacher info
+		if teacher != nil {
+			event["teacher"] = map[string]interface{}{
+				"id":       teacher.ID,
+				"name":     teacher.Username,
+				"username": teacher.Username,
+			}
+		}
+
+		// Add room info
+		if session.Room != nil {
+			event["room"] = map[string]interface{}{
+				"id":   session.Room.ID,
+				"name": session.Room.RoomName,
+			}
+		}
+
+		// Add course info
+		if session.Schedule.Group != nil && session.Schedule.Group.Course.Name != "" {
+			event["course"] = map[string]interface{}{
+				"name":  session.Schedule.Group.Course.Name,
+				"level": session.Schedule.Group.Course.Level,
+			}
+		}
+
+		events = append(events, event)
+	}
+
+	// Include holidays if requested
+	var holidays []map[string]interface{}
+	if includeHolidays {
+		// Parse start and end dates
+		startDateParsed, _ := time.Parse("2006-01-02", startDate)
+		endDateParsed, _ := time.Parse("2006-01-02", endDate)
+		
+		// Get Thai holidays for the date range
+		holidayDates, err := services.GetThaiHolidays(startDateParsed.Year(), endDateParsed.Year())
+		if err == nil {
+			for _, holiday := range holidayDates {
+				if holiday.After(startDateParsed.AddDate(0, 0, -1)) && holiday.Before(endDateParsed.AddDate(0, 0, 1)) {
+					holidays = append(holidays, map[string]interface{}{
+						"date":  holiday.Format("2006-01-02"),
+						"title": "Thai Holiday",
+						"type":  "holiday",
+					})
+				}
+			}
+		}
+	}
+
+	// Build response
+	response := map[string]interface{}{
+		"events":    events,
+		"holidays":  holidays,
+		"view_type": viewType,
+		"date_range": map[string]interface{}{
+			"start": startDate,
+			"end":   endDate,
+		},
+		"total_events": len(events),
+		"user_context": map[string]interface{}{
+			"role":      userRole,
+			"user_id":   userID,
+			"branch_id": branchID,
+		},
 	}
 
 	return c.JSON(fiber.Map{
-		"sessions": sessions,
-		"message": "Basic session list - full calendar view to be implemented",
+		"success": true,
+		"data":    response,
 	})
 }
 
