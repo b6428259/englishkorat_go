@@ -5,6 +5,7 @@ import (
 	"englishkorat_go/database"
 	"englishkorat_go/middleware"
 	"englishkorat_go/models"
+	"englishkorat_go/services/notifications"
 	"englishkorat_go/utils"
 	"fmt"
 	"regexp"
@@ -934,9 +935,38 @@ func (sc *StudentController) NewPublicRegisterStudent(c *fiber.Ctx) error {
 	createdAt := student.CreatedAt
 	regID := fmt.Sprintf("REG-%d-%06d", createdAt.Year(), student.ID)
 
-	// TODO: Create admin notification
-	// This would typically send a notification to admins about the new registration
-	// For now, we'll skip this implementation
+	// Create admin notification for new student registration
+	go func() {
+		// Find all admin and owner users
+		var admins []models.User
+		if err := database.DB.Where("role IN ?", []string{"admin", "owner"}).Find(&admins).Error; err != nil {
+			return // Log the error in production
+		}
+
+		if len(admins) > 0 {
+			// Prepare user IDs for notification
+			adminIDs := make([]uint, 0, len(admins))
+			for _, admin := range admins {
+				adminIDs = append(adminIDs, admin.ID)
+			}
+
+			// Create notification message
+			title := "New Student Registration"
+			titleTh := "การลงทะเบียนนักเรียนใหม่"
+			message := fmt.Sprintf("New student %s %s has registered (%s registration). Please review and process.", 
+				student.FirstName, student.LastName, student.RegistrationType)
+			messageTh := fmt.Sprintf("นักเรียนใหม่ %s %s ได้ลงทะเบียนแล้ว (แบบ%s) กรุณาตรวจสอบและดำเนินการ", 
+				student.FirstName, student.LastName, getRegistrationTypeInThai(student.RegistrationType))
+
+			// Send notification using the notification service
+			notificationService := notifications.NewService()
+			queuedNotif := notifications.QueuedForController(title, titleTh, message, messageTh, "info")
+			if err := notificationService.EnqueueOrCreate(adminIDs, queuedNotif); err != nil {
+				// Log error in production
+				fmt.Printf("Error creating admin notification for student registration: %v\n", err)
+			}
+		}
+	}()
 
 	// Reload relationships for response
 	if err := database.DB.Preload("User").Preload("User.Branch").Preload("PreferredBranch").First(&student, student.ID).Error; err != nil {
@@ -1267,4 +1297,16 @@ func (sc *StudentController) SetExamScores(c *fiber.Ctx) error {
 			"average_score":   avgScore,
 		},
 	})
+}
+
+// getRegistrationTypeInThai converts registration type to Thai
+func getRegistrationTypeInThai(regType string) string {
+	switch strings.ToLower(regType) {
+	case "quick":
+		return "รวดเร็ว"
+	case "full":
+		return "เต็มรูปแบบ"
+	default:
+		return regType
+	}
 }
