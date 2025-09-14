@@ -8,6 +8,7 @@ import (
 	"englishkorat_go/services"
 	"englishkorat_go/services/notifications"
 	"englishkorat_go/services/websocket"
+	"englishkorat_go/handlers"
 	"log"
 	"os"
 
@@ -33,6 +34,13 @@ func init() {
 	logArchiveService.StartLogMaintenanceScheduler()
 
 	// Note: ScheduleManager and Notification worker will be wired and started in main()
+
+	// ✅ Start Notification Scheduler
+	notificationScheduler := services.NewNotificationScheduler()
+	go notificationScheduler.StartScheduler()
+
+	log.Printf("🔍 LINE_CHANNEL_SECRET length: %d", len(os.Getenv("LINE_CHANNEL_SECRET")))
+	log.Printf("🔍 LINE_CHANNEL_ACCESS_TOKEN length: %d", len(os.Getenv("LINE_CHANNEL_ACCESS_TOKEN")))
 }
 
 func main() {
@@ -88,6 +96,36 @@ func main() {
 	// API routes
 	routes.SetupRoutes(app, wsHub)
 	routes.SetupStaticRoutes(app)
+
+	// ✅ LINE Webhook Route
+	lineChannelSecret := os.Getenv("LINE_CHANNEL_SECRET")
+	lineChannelToken := os.Getenv("LINE_CHANNEL_ACCESS_TOKEN")
+	if lineChannelSecret != "" && lineChannelToken != "" {
+		lineHandler := handlers.NewLineWebhookHandler(database.DB)
+
+		// POST route สำหรับ LINE webhook จริง
+		app.Post("/line/webhook", func(c *fiber.Ctx) error {
+			return lineHandler.Handle(c)
+		})
+
+		// GET route สำหรับทดสอบผ่าน browser
+		app.Get("/line/webhook", func(c *fiber.Ctx) error {
+			return c.JSON(fiber.Map{
+				"status":  "ok",
+				"message": "LINE webhook endpoint ready (use POST for real events)",
+			})
+		})
+
+		log.Println("✅ LINE Webhook enabled at /line/webhook")
+	} else {
+		log.Println("⚠️ LINE Webhook disabled: Missing LINE_CHANNEL_SECRET or LINE_CHANNEL_ACCESS_TOKEN")
+	}
+
+	for _, r := range app.Stack() {
+    for _, route := range r {
+        log.Printf("📌 Registered route: %s %s", route.Method, route.Path)
+    }
+	}
 
 	// 404 handler
 	app.Use(func(c *fiber.Ctx) error {

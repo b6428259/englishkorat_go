@@ -215,6 +215,13 @@ type Student_Group struct {
 	Course  Course  `json:"course,omitempty" gorm:"foreignKey:CourseID"`
 }
 
+type LineGroup struct {
+	BaseModel
+    ID        uint   `json:"id" gorm:"primaryKey"`
+    GroupName string `json:"group_name" gorm:"unique;not null"`
+    Token     string `json:"token" gorm:"size:255;not null"` // LINE Notify token ของกลุ่มนั้น
+}
+
 type User_inCourse struct {
 	BaseModel
 	UserID   uint `json:"user_id" gorm:"not null"`

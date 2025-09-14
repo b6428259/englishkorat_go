@@ -110,6 +110,7 @@ func AutoMigrate() {
 		&models.ScheduleParticipant{},
 		&models.SessionConfirmation{},
 		&models.NotificationPreference{},
+		&models.LineGroup{},
 	}
 
 	err := DB.AutoMigrate(modelsList...)
