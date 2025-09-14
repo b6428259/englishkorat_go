@@ -100,53 +100,75 @@ type User struct {
 // Student model
 type Student struct {
 	BaseModel
-	UserID               uint       `json:"user_id" gorm:"uniqueIndex;not null"`
-	FirstName            string     `json:"first_name" gorm:"size:100"`
-	FirstNameEn          string     `json:"first_name_en" gorm:"size:100"`
-	LastName             string     `json:"last_name" gorm:"size:100"`
-	LastNameEn           string     `json:"last_name_en" gorm:"size:100"`
-	NicknameEn           string     `json:"nickname_en" gorm:"size:100"`
-	NicknameTh           string     `json:"nickname_th" gorm:"size:100"`
-	DateOfBirth          *time.Time `json:"date_of_birth"`
-	Gender               string     `json:"gender" gorm:"size:20"`
-	Address              string     `json:"address" gorm:"size:500"`
-	CitizenID            string     `json:"citizen_id" gorm:"size:255"` // encrypted
-	Age                  int        `json:"age"`
-	AgeGroup             string     `json:"age_group" gorm:"size:50;type:enum('kids','teens','adults')"` // kids, teens, adults
-	GradeLevel           string     `json:"grade_level" gorm:"size:50"`
-	CurrentEducation     string     `json:"current_education" gorm:"size:100"`
-	CEFRLevel            string     `json:"cefr_level" gorm:"size:10"`
-	PreferredLanguage    string     `json:"preferred_language" gorm:"size:50"`
-	LanguageLevel        string     `json:"language_level" gorm:"size:50"`
-	RecentCEFR           string     `json:"recent_cefr" gorm:"size:10"`
-	LearningStyle        string     `json:"learning_style" gorm:"size:50"`
-	LearningGoals        string     `json:"learning_goals" gorm:"type:text"`
-	ParentName           string     `json:"parent_name" gorm:"size:200"`
-	ParentPhone          string     `json:"parent_phone" gorm:"size:20"`
-	EmergencyContact     string     `json:"emergency_contact" gorm:"size:200"`
-	EmergencyPhone       string     `json:"emergency_phone" gorm:"size:20"`
-	PreferredTimeSlots   JSON       `json:"preferred_time_slots" gorm:"type:json"`
-	UnavailableTimeSlots JSON       `json:"unavailable_time_slots" gorm:"type:json"`
-	SelectedCourses      string     `json:"selected_courses" gorm:"size:500"`
-	GrammarScore         int        `json:"grammar_score"`
-	SpeakingScore        int        `json:"speaking_score"`
-	ListeningScore       int        `json:"listening_score"`
-	ReadingScore         int        `json:"reading_score"`
-	WritingScore         int        `json:"writing_score"`
+	// Make UserID nullable to allow public student registrations without linked user
+	UserID      *uint      `json:"user_id" gorm:"uniqueIndex;default:null"` // <-- allow null
+	FirstName   string     `json:"first_name" gorm:"size:100;not null"`
+	FirstNameEn string     `json:"first_name_en" gorm:"size:100"`
+	LastName    string     `json:"last_name" gorm:"size:100;not null"`
+	LastNameEn  string     `json:"last_name_en" gorm:"size:100"`
+	NicknameEn  string     `json:"nickname_en" gorm:"size:100;not null"`
+	NicknameTh  string     `json:"nickname_th" gorm:"size:100;not null"`
+	DateOfBirth *time.Time `json:"date_of_birth"`
+	Gender      string     `json:"gender" gorm:"size:20;type:enum('male','female','other')"`
+	Address     string     `json:"address" gorm:"size:500"`
+	CitizenID   string     `json:"citizen_id" gorm:"size:13"`                                   // 13 digits for Thai ID
+	Age         int        `json:"age"`                                                         // Auto-calculated from date_of_birth
+	AgeGroup    string     `json:"age_group" gorm:"size:50;type:enum('kids','teens','adults')"` // kids, teens, adults
+
+	// Contact Information
+	Phone  string `json:"phone" gorm:"size:20"`
+	Email  string `json:"email" gorm:"size:255"`
+	LineID string `json:"line_id" gorm:"size:100"`
+
+	// Education & Learning
+	GradeLevel        string `json:"grade_level" gorm:"size:50"`
+	CurrentEducation  string `json:"current_education" gorm:"size:100"`
+	CEFRLevel         string `json:"cefr_level" gorm:"size:10"`
+	PreferredLanguage string `json:"preferred_language" gorm:"size:50;type:enum('english','chinese')"`
+	LanguageLevel     string `json:"language_level" gorm:"size:50"`
+	RecentCEFR        string `json:"recent_cefr" gorm:"size:10"`
+	LearningStyle     string `json:"learning_style" gorm:"size:50;type:enum('private','pair','group')"`
+	LearningGoals     string `json:"learning_goals" gorm:"type:text"`
+	PreferredBranchID *uint  `json:"preferred_branch_id" gorm:"index"`
+	TeacherType       string `json:"teacher_type" gorm:"size:50"`
+
+	// Emergency Contacts
+	ParentName       string `json:"parent_name" gorm:"size:200"`
+	ParentPhone      string `json:"parent_phone" gorm:"size:20"`
+	EmergencyContact string `json:"emergency_contact" gorm:"size:200"`
+	EmergencyPhone   string `json:"emergency_phone" gorm:"size:20"`
+
+	// JSON Fields for complex data
+	PreferredTimeSlots   JSON `json:"preferred_time_slots" gorm:"type:json"`
+	UnavailableTimeSlots JSON `json:"unavailable_time_slots" gorm:"type:json"`
+	SelectedCourses      JSON `json:"selected_courses" gorm:"type:json"`
+	AvailabilitySchedule JSON `json:"availability_schedule" gorm:"type:json"`
+	UnavailableTimes     JSON `json:"unavailable_times" gorm:"type:json"`
+
+	// Test Scores (nullable until exam completed)
+	GrammarScore   *int `json:"grammar_score"`
+	SpeakingScore  *int `json:"speaking_score"`
+	ListeningScore *int `json:"listening_score"`
+	ReadingScore   *int `json:"reading_score"`
+	WritingScore   *int `json:"writing_score"`
+
+	// Registration & Status Management
+	RegistrationStatus string `json:"registration_status" gorm:"size:50;type:enum('pending_review','schedule_exam','waiting_for_group','active');default:'pending_review'"`
+	RegistrationType   string `json:"registration_type" gorm:"size:20;type:enum('quick','full');default:'full'"`
+
+	// Legacy fields
 	LearningPreferences  string     `json:"learning_preferences" gorm:"type:text"`
-	AvailabilitySchedule JSON       `json:"availability_schedule" gorm:"type:json"`
-	UnavailableTimes     JSON       `json:"unavailable_times" gorm:"type:json"`
 	PreferredTeacherType string     `json:"preferred_teacher_type" gorm:"size:50"`
 	ContactSource        string     `json:"contact_source" gorm:"size:100"`
-	RegistrationStatus   string     `json:"registration_status" gorm:"size:50"`
-	DepositAmount        int        `json:"deposit_amount"`
-	PaymentStatus        string     `json:"payment_status" gorm:"size:50"`
+	DepositAmount        float64    `json:"deposit_amount" gorm:"type:decimal(10,2)"`
+	PaymentStatus        string     `json:"payment_status" gorm:"size:50;type:enum('pending','paid','partial');default:'pending'"`
 	LastStatusUpdate     *time.Time `json:"last_status_update"`
-	DaysWaiting          int        `json:"days_waiting"`
-	AdminContact         string     `json:"admin_contact" gorm:"size:200"`
+	DaysWaiting          int        `json:"days_waiting" gorm:"default:0"`
+	AdminContact         bool       `json:"admin_contact" gorm:"default:false"`
 
 	// Relationships
-	User User `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	User            User   `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	PreferredBranch Branch `json:"preferred_branch,omitempty" gorm:"foreignKey:PreferredBranchID"`
 }
 
 type Student_Group struct {

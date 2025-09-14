@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 
@@ -403,6 +404,310 @@ func (sc *ScheduleController) GetScheduleSessions(c *fiber.Ctx) error {
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"sessions": sessions,
+	})
+}
+
+// GetTeachersSchedules - ดูตารางของ teacher ทั้งหมด ตามช่วงวันที่
+// Query params:
+//
+//	date_filter: one of day, week, month, year
+//	date: reference date (YYYY-MM-DD or RFC3339)
+func (sc *ScheduleController) GetTeachersSchedules(c *fiber.Ctx) error {
+	// Tolerate duplicate query keys; use the first non-empty
+	dateFilter := c.Query("date_filter", "day")
+	dateStr := c.Query("date")
+	if dateStr == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "date query parameter is required (YYYY-MM-DD)"})
+	}
+
+	// Try parsing as YYYY-MM-DD first, then RFC3339
+	var refDate time.Time
+	var err error
+	refDate, err = time.Parse("2006-01-02", dateStr)
+	if err != nil {
+		refDate, err = time.Parse(time.RFC3339, dateStr)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid date format; use YYYY-MM-DD or RFC3339"})
+		}
+	}
+
+	// Normalize to UTC for API consistency
+	refDate = refDate.UTC()
+	loc := time.UTC
+	// Compute start (inclusive) and end (exclusive)
+	var start time.Time
+	var end time.Time
+	switch dateFilter {
+	case "day":
+		start = time.Date(refDate.Year(), refDate.Month(), refDate.Day(), 0, 0, 0, 0, loc)
+		end = start.AddDate(0, 0, 1)
+	case "week":
+		// week starting Monday
+		wd := int(refDate.Weekday())
+		// convert Sunday(0) to 7
+		if wd == 0 {
+			wd = 7
+		}
+		// offset to Monday
+		offset := wd - 1
+		start = time.Date(refDate.Year(), refDate.Month(), refDate.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, -offset)
+		end = start.AddDate(0, 0, 7)
+	case "month":
+		start = time.Date(refDate.Year(), refDate.Month(), 1, 0, 0, 0, 0, loc)
+		end = start.AddDate(0, 1, 0)
+	case "year":
+		start = time.Date(refDate.Year(), 1, 1, 0, 0, 0, 0, loc)
+		end = start.AddDate(1, 0, 0)
+	default:
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid date_filter; allowed: day, week, month, year"})
+	}
+
+	// Query sessions in range
+	var sessions []models.Schedule_Sessions
+	if err := database.DB.Preload("Schedule").Preload("Schedule.AssignedTo").Preload("Schedule.Room").Where("session_date >= ? AND session_date < ?", start, end).Order("session_date ASC").Find(&sessions).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch sessions"})
+	}
+
+	// Fetch all teachers (users with role=teacher) to include even if no sessions
+	var teachers []models.User
+	if err := database.DB.Where("role = ?", "teacher").Preload("Teacher").Find(&teachers).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch teachers"})
+	}
+
+	// Group sessions by teacher (AssignedToUserID) and return a light DTO for sessions
+	type sessionDTO struct {
+		ScheduleID  uint      `json:"schedule_id"`
+		SessionDate time.Time `json:"session_date"`
+		StartTime   time.Time `json:"start_time"`
+		EndTime     time.Time `json:"end_time"`
+		Status      string    `json:"status"`
+	}
+	type teacherResp struct {
+		TeacherID   uint         `json:"teacher_id"`
+		TeacherName string       `json:"teacher_name"`
+		Sessions    []sessionDTO `json:"sessions"`
+	}
+
+	grouped := make(map[uint]*teacherResp)
+	// Initialize all teachers with empty sessions
+	for _, t := range teachers {
+		name := t.Username
+		if t.Teacher != nil {
+			// prefer nickname + last name TH/EN if available
+			if t.Teacher.NicknameTh != "" || t.Teacher.NicknameEn != "" {
+				if t.Teacher.NicknameTh != "" {
+					name = t.Teacher.NicknameTh
+				} else {
+					name = t.Teacher.NicknameEn
+				}
+			}
+		}
+		grouped[t.ID] = &teacherResp{TeacherID: t.ID, TeacherName: name, Sessions: []sessionDTO{}}
+	}
+
+	// Assign sessions into groups; unassigned sessions go under teacher_id=0
+	if _, ok := grouped[0]; !ok {
+		grouped[0] = &teacherResp{TeacherID: 0, TeacherName: "unassigned", Sessions: []sessionDTO{}}
+	}
+	for _, s := range sessions {
+		tID := s.Schedule.AssignedTo.ID
+		if _, ok := grouped[tID]; !ok {
+			// In case assigned user is not role 'teacher' but admin/owner; still include
+			name := s.Schedule.AssignedTo.Username
+			grouped[tID] = &teacherResp{TeacherID: tID, TeacherName: name, Sessions: []sessionDTO{}}
+		}
+		grouped[tID].Sessions = append(grouped[tID].Sessions, sessionDTO{
+			ScheduleID:  s.ScheduleID,
+			SessionDate: s.Session_date.UTC(),
+			StartTime:   s.Start_time.UTC(),
+			EndTime:     s.End_time.UTC(),
+			Status:      s.Status,
+		})
+	}
+
+	// Convert to slice and sort by teacher_name; unassigned (id=0) last
+	resp := make([]teacherResp, 0, len(grouped))
+	for _, v := range grouped {
+		resp = append(resp, *v)
+	}
+	// simple sort
+	sort.SliceStable(resp, func(i, j int) bool {
+		if resp[i].TeacherID == 0 {
+			return false
+		}
+		if resp[j].TeacherID == 0 {
+			return true
+		}
+		return resp[i].TeacherName < resp[j].TeacherName
+	})
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"teachers": resp, "start": start, "end": end})
+}
+
+// GetCalendarView - calendar data for sessions (and optional holidays/students)
+// Query: view=day|week|month|year, date=YYYY-MM-DD or RFC3339, include_students=true|false, include_holidays=true|false
+func (sc *ScheduleController) GetCalendarView(c *fiber.Ctx) error {
+	view := c.Query("view", "week")
+	dateStr := c.Query("date")
+	if dateStr == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "date query parameter is required"})
+	}
+	includeStudents := c.Query("include_students") == "true"
+	includeHolidays := c.Query("include_holidays") == "true"
+
+	// Parse date
+	refDate, err := time.Parse("2006-01-02", dateStr)
+	if err != nil {
+		refDate, err = time.Parse(time.RFC3339, dateStr)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid date format; use YYYY-MM-DD or RFC3339"})
+		}
+	}
+	loc := refDate.Location()
+
+	// Compute range
+	var start, end time.Time
+	switch view {
+	case "day":
+		start = time.Date(refDate.Year(), refDate.Month(), refDate.Day(), 0, 0, 0, 0, loc)
+		end = start.AddDate(0, 0, 1)
+	case "week":
+		wd := int(refDate.Weekday())
+		if wd == 0 {
+			wd = 7
+		}
+		offset := wd - 1
+		start = time.Date(refDate.Year(), refDate.Month(), refDate.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, -offset)
+		end = start.AddDate(0, 0, 7)
+	case "month":
+		start = time.Date(refDate.Year(), refDate.Month(), 1, 0, 0, 0, 0, loc)
+		end = start.AddDate(0, 1, 0)
+	case "year":
+		start = time.Date(refDate.Year(), 1, 1, 0, 0, 0, 0, loc)
+		end = start.AddDate(1, 0, 0)
+	default:
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid view; allowed: day, week, month, year"})
+	}
+
+	// Load sessions in range
+	var sessions []models.Schedule_Sessions
+	if err := database.DB.Preload("Schedule").
+		Preload("Schedule.Course").
+		Preload("Schedule.AssignedTo").
+		Preload("Schedule.Room").
+		Where("session_date >= ? AND session_date < ?", start, end).
+		Order("session_date ASC").
+		Find(&sessions).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch sessions"})
+	}
+
+	// Optional: gather students per course if requested
+	courseIDsSet := map[uint]struct{}{}
+	if includeStudents {
+		for _, s := range sessions {
+			courseIDsSet[s.Schedule.CourseID] = struct{}{}
+		}
+	}
+	type enrolledStudent struct {
+		ID       uint   `json:"id"`
+		Username string `json:"username"`
+		Role     string `json:"role"`
+	}
+	studentsByCourse := map[uint][]enrolledStudent{}
+	if includeStudents && len(courseIDsSet) > 0 {
+		// Build slice of course IDs
+		courseIDs := make([]uint, 0, len(courseIDsSet))
+		for id := range courseIDsSet {
+			courseIDs = append(courseIDs, id)
+		}
+		// Join user_in_courses with users
+		type row struct {
+			CourseID uint
+			UserID   uint
+			Username string
+			Role     string
+		}
+		var rows []row
+		if err := database.DB.Table("user_in_courses").
+			Select("user_in_courses.course_id as course_id, users.id as user_id, users.username as username, users.role as role").
+			Joins("JOIN users ON users.id = user_in_courses.user_id").
+			Where("user_in_courses.course_id IN ? AND user_in_courses.role = ?", courseIDs, "student").
+			Scan(&rows).Error; err == nil {
+			for _, r := range rows {
+				studentsByCourse[r.CourseID] = append(studentsByCourse[r.CourseID], enrolledStudent{ID: r.UserID, Username: r.Username, Role: r.Role})
+			}
+		}
+	}
+
+	// Build events
+	type calendarEvent struct {
+		Type        string            `json:"type"` // session or holiday
+		ID          uint              `json:"id,omitempty"`
+		ScheduleID  uint              `json:"schedule_id,omitempty"`
+		CourseID    uint              `json:"course_id,omitempty"`
+		CourseName  string            `json:"course_name,omitempty"`
+		TeacherID   uint              `json:"teacher_id,omitempty"`
+		TeacherName string            `json:"teacher_name,omitempty"`
+		RoomID      uint              `json:"room_id,omitempty"`
+		RoomName    string            `json:"room_name,omitempty"`
+		Date        time.Time         `json:"date"`
+		StartTime   time.Time         `json:"start_time,omitempty"`
+		EndTime     time.Time         `json:"end_time,omitempty"`
+		Status      string            `json:"status,omitempty"`
+		Students    []enrolledStudent `json:"students,omitempty"`
+		Title       string            `json:"title,omitempty"`
+	}
+
+	events := make([]calendarEvent, 0, len(sessions))
+	for _, s := range sessions {
+		tID := s.Schedule.AssignedTo.ID
+		tName := s.Schedule.AssignedTo.Username
+		roomName := s.Schedule.Room.RoomName
+		courseName := s.Schedule.Course.Name
+		ev := calendarEvent{
+			Type:        "session",
+			ID:          s.ID,
+			ScheduleID:  s.ScheduleID,
+			CourseID:    s.Schedule.CourseID,
+			CourseName:  courseName,
+			TeacherID:   tID,
+			TeacherName: tName,
+			RoomID:      s.Schedule.RoomID,
+			RoomName:    roomName,
+			Date:        s.Session_date,
+			StartTime:   s.Start_time,
+			EndTime:     s.End_time,
+			Status:      s.Status,
+			Title:       s.Schedule.ScheduleName,
+		}
+		if includeStudents {
+			ev.Students = studentsByCourse[s.Schedule.CourseID]
+		}
+		events = append(events, ev)
+	}
+
+	// Optional: add holidays
+	if includeHolidays {
+		years := map[int]struct{}{start.Year(): {}, end.AddDate(0, 0, -1).Year(): {}}
+		holidayDates := []time.Time{}
+		for y := range years {
+			h, err := services.GetThaiHolidays(y, y)
+			if err == nil {
+				holidayDates = append(holidayDates, h...)
+			}
+		}
+		for _, d := range holidayDates {
+			if !d.Before(start) && d.Before(end) {
+				events = append(events, calendarEvent{Type: "holiday", Date: d, Title: "Holiday"})
+			}
+		}
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"start":  start,
+		"end":    end,
+		"view":   view,
+		"events": events,
 	})
 }
 

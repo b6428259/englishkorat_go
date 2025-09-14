@@ -14,46 +14,45 @@ import (
 	"englishkorat_go/database"
 	"englishkorat_go/models"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awscfg "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/go-redis/redis/v8"
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 )
 
+// LogArchiveService handles flushing cached logs and archiving old logs to S3
 type LogArchiveService struct {
 	redisClient *redis.Client
-	s3Session   *session.Session
+	awsConfig   aws.Config
 }
 
+// ArchivedLog is the exported representation stored inside archives
 type ArchivedLog struct {
-	ID         uint                   `json:"id"`
-	UserID     uint                   `json:"user_id"`
-	Action     string                 `json:"action"`
-	Resource   string                 `json:"resource"`
-	ResourceID uint                   `json:"resource_id"`
-	Details    map[string]interface{} `json:"details"`
-	IPAddress  string                 `json:"ip_address"`
-	UserAgent  string                 `json:"user_agent"`
-	CreatedAt  time.Time              `json:"created_at"`
-	Username   string                 `json:"username,omitempty"`
-	UserRole   string                 `json:"user_role,omitempty"`
+	ID         uint           `json:"id"`
+	UserID     uint           `json:"user_id"`
+	Action     string         `json:"action"`
+	Resource   string         `json:"resource"`
+	ResourceID uint           `json:"resource_id"`
+	Details    map[string]any `json:"details"`
+	IPAddress  string         `json:"ip_address"`
+	UserAgent  string         `json:"user_agent"`
+	CreatedAt  time.Time      `json:"created_at"`
+	Username   string         `json:"username,omitempty"`
+	UserRole   string         `json:"user_role,omitempty"`
 }
 
+// NewLogArchiveService creates a new service instance
 func NewLogArchiveService() *LogArchiveService {
-	// Initialize AWS session
-	sess, err := session.NewSession(&aws.Config{
-		Region: aws.String(os.Getenv("AWS_REGION")),
-	})
+	cfg, err := awscfg.LoadDefaultConfig(context.Background(), awscfg.WithRegion(os.Getenv("AWS_REGION")))
 	if err != nil {
-		logrus.WithError(err).Error("Failed to create AWS session")
-		sess = nil
+		logrus.WithError(err).Warn("Failed to load AWS config; S3 operations will fail until configured")
 	}
 
 	return &LogArchiveService{
 		redisClient: database.GetRedisClient(),
-		s3Session:   sess,
+		awsConfig:   cfg,
 	}
 }
 
@@ -168,14 +167,22 @@ func (las *LogArchiveService) ArchiveOldLogs(daysOld int) error {
 			}
 
 			// Parse details
-			if log.Details != nil{
-				var details map[string]interface{}
+			if log.Details != nil && len(log.Details) > 0 {
+				var details map[string]any
 				if err := json.Unmarshal(log.Details, &details); err == nil {
 					archivedLog.Details = details
+				} else {
+					var detailsLegacy map[string]interface{}
+					if err2 := json.Unmarshal(log.Details, &detailsLegacy); err2 == nil {
+						m := make(map[string]any, len(detailsLegacy))
+						for k, v := range detailsLegacy {
+							m[k] = v
+						}
+						archivedLog.Details = m
+					}
 				}
 			}
 
-			// Add user info if available
 			if log.User.ID > 0 {
 				archivedLog.Username = log.User.Username
 				archivedLog.UserRole = log.User.Role
@@ -189,7 +196,6 @@ func (las *LogArchiveService) ArchiveOldLogs(daysOld int) error {
 		logrus.Info("No logs to archive")
 		return nil
 	}
-
 	logrus.Infof("Archiving %d logs older than %s", len(allLogs), cutoffDate.Format("2006-01-02"))
 
 	// Create ZIP archive
@@ -252,13 +258,12 @@ func (las *LogArchiveService) createZipArchive(logs []ArchivedLog, fileName stri
 	encoder := json.NewEncoder(logsFile)
 	encoder.SetIndent("", "  ")
 
-	logData := map[string]interface{}{
+	logData := map[string]any{
 		"export_date":    time.Now().UTC(),
 		"record_count":   len(logs),
 		"format_version": "1.0",
 		"logs":           logs,
 	}
-
 	if err := encoder.Encode(logData); err != nil {
 		return nil, fmt.Errorf("failed to encode logs to JSON: %v", err)
 	}
@@ -269,25 +274,23 @@ func (las *LogArchiveService) createZipArchive(logs []ArchivedLog, fileName stri
 		return nil, fmt.Errorf("failed to create metadata file in ZIP: %v", err)
 	}
 
-	metadata := map[string]interface{}{
+	metadata := map[string]any{
 		"file_name":    fileName,
 		"created_at":   time.Now().UTC(),
 		"record_count": len(logs),
-		"date_range": map[string]interface{}{
+		"date_range": map[string]any{
 			"start": logs[0].CreatedAt,
 			"end":   logs[len(logs)-1].CreatedAt,
 		},
 		"schema_version": "1.0",
 		"description":    "English Korat Activity Logs Archive",
 	}
-
 	metadataEncoder := json.NewEncoder(metadataFile)
-	metadataEncoder.SetIndent("", "  ")
 	if err := metadataEncoder.Encode(metadata); err != nil {
 		return nil, fmt.Errorf("failed to encode metadata to JSON: %v", err)
 	}
 
-	// Create CSV export for easy viewing
+	// Create CSV file
 	csvFile, err := zipWriter.Create("activity_logs.csv")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CSV file in ZIP: %v", err)
@@ -332,16 +335,16 @@ func (las *LogArchiveService) createZipArchive(logs []ArchivedLog, fileName stri
 
 // uploadToS3 uploads data to S3 bucket
 func (las *LogArchiveService) uploadToS3(key string, data *bytes.Buffer) error {
-	if las.s3Session == nil {
-		return fmt.Errorf("S3 session not available")
+	if las.awsConfig.Region == "" {
+		return fmt.Errorf("AWS not configured")
 	}
 
-	s3Client := s3.New(las.s3Session)
+	s3Client := s3.NewFromConfig(las.awsConfig)
 	bucketName := os.Getenv("S3_BUCKET_NAME")
 
-	_, err := s3Client.PutObject(&s3.PutObjectInput{
-		Bucket:      aws.String(bucketName),
-		Key:         aws.String(key),
+	_, err := s3Client.PutObject(context.Background(), &s3.PutObjectInput{
+		Bucket:      &bucketName,
+		Key:         &key,
 		Body:        bytes.NewReader(data.Bytes()),
 		ContentType: aws.String("application/zip"),
 	})
@@ -349,18 +352,18 @@ func (las *LogArchiveService) uploadToS3(key string, data *bytes.Buffer) error {
 	return err
 }
 
-// downloadFromS3 downloads file from S3 bucket
+// downloadFromS3 downloads a key from S3
 func (las *LogArchiveService) downloadFromS3(key string) (io.ReadCloser, error) {
-	if las.s3Session == nil {
-		return nil, fmt.Errorf("S3 session not available")
+	if las.awsConfig.Region == "" {
+		return nil, fmt.Errorf("AWS not configured")
 	}
 
-	s3Client := s3.New(las.s3Session)
+	s3Client := s3.NewFromConfig(las.awsConfig)
 	bucketName := os.Getenv("S3_BUCKET_NAME")
 
-	result, err := s3Client.GetObject(&s3.GetObjectInput{
-		Bucket: aws.String(bucketName),
-		Key:    aws.String(key),
+	result, err := s3Client.GetObject(context.Background(), &s3.GetObjectInput{
+		Bucket: &bucketName,
+		Key:    &key,
 	})
 
 	if err != nil {
@@ -368,50 +371,6 @@ func (las *LogArchiveService) downloadFromS3(key string) (io.ReadCloser, error) 
 	}
 
 	return result.Body, nil
-}
-
-// StartLogMaintenanceScheduler starts background tasks for log maintenance
-func (las *LogArchiveService) StartLogMaintenanceScheduler() {
-	// Run cache flush every hour
-	go func() {
-		ticker := time.NewTicker(1 * time.Hour)
-		defer ticker.Stop()
-
-		for range ticker.C {
-			if err := las.FlushCachedLogsToDatabase(); err != nil {
-				logrus.WithError(err).Error("Failed to flush cached logs")
-			}
-		}
-	}()
-
-	// Run archive process daily at 2 AM
-	go func() {
-		for {
-			now := time.Now()
-			// Calculate next 2 AM
-			next := time.Date(now.Year(), now.Month(), now.Day(), 2, 0, 0, 0, now.Location())
-			if now.After(next) {
-				next = next.Add(24 * time.Hour)
-			}
-
-			// Wait until 2 AM
-			time.Sleep(time.Until(next))
-
-			// Get archive age from environment or default to 7 days
-			archiveAge := 7
-			if ageStr := os.Getenv("LOG_ARCHIVE_DAYS"); ageStr != "" {
-				if age, err := time.ParseDuration(ageStr + "d"); err == nil {
-					archiveAge = int(age.Hours() / 24)
-				}
-			}
-
-			if err := las.ArchiveOldLogs(archiveAge); err != nil {
-				logrus.WithError(err).Error("Failed to archive old logs")
-			}
-		}
-	}()
-
-	logrus.Info("Log maintenance scheduler started")
 }
 
 // GetArchivedLogs retrieves list of archived log files
@@ -448,4 +407,28 @@ func (las *LogArchiveService) DownloadArchivedLogs(archiveID uint) (io.ReadClose
 	}
 
 	return reader, archive.FileName, nil
+}
+
+// StartLogMaintenanceScheduler starts background goroutine to flush and archive logs periodically
+func (las *LogArchiveService) StartLogMaintenanceScheduler() {
+	go func() {
+		// Run immediately once
+		if err := las.FlushCachedLogsToDatabase(); err != nil {
+			logrus.WithError(err).Warn("initial FlushCachedLogsToDatabase failed")
+		}
+		if err := las.ArchiveOldLogs(30); err != nil {
+			logrus.WithError(err).Warn("initial ArchiveOldLogs failed")
+		}
+
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := las.FlushCachedLogsToDatabase(); err != nil {
+				logrus.WithError(err).Warn("periodic FlushCachedLogsToDatabase failed")
+			}
+			if err := las.ArchiveOldLogs(30); err != nil {
+				logrus.WithError(err).Warn("periodic ArchiveOldLogs failed")
+			}
+		}
+	}()
 }

@@ -6,6 +6,8 @@ import (
 	"englishkorat_go/middleware"
 	"englishkorat_go/routes"
 	"englishkorat_go/services"
+	"englishkorat_go/services/notifications"
+	"englishkorat_go/services/websocket"
 	"log"
 	"os"
 
@@ -30,12 +32,14 @@ func init() {
 	logArchiveService := services.NewLogArchiveService()
 	logArchiveService.StartLogMaintenanceScheduler()
 
-	// Start schedule management services
-	scheduleManager := services.NewScheduleManager()
-	scheduleManager.Start()
+	// Note: ScheduleManager and Notification worker will be wired and started in main()
 }
 
 func main() {
+	// Create WebSocket hub first
+	wsHub := websocket.NewHub()
+	go wsHub.Run()
+
 	// Create Fiber app
 	app := fiber.New(fiber.Config{
 		ErrorHandler: customErrorHandler,
@@ -65,8 +69,24 @@ func main() {
 		})
 	})
 
+	// Note: WebSocket upgrade and authentication are handled in routes.SetupRoutes
+
+	// Wire notifications to the WebSocket hub globally so any new Service uses it (incl. schedulers)
+	notifications.SetDefaultWSHub(wsHub)
+	notifService := notifications.NewService()
+	notifService.SetWebSocketHub(wsHub)
+	if config.AppConfig.UseRedisNotifications {
+		stopNotif := make(chan struct{})
+		notifService.StartWorker(stopNotif)
+	}
+
+	// Start schedule management services after WebSocket hub is ready
+	scheduleManager := services.NewScheduleManager()
+	scheduleManager.SetWebSocketHub(wsHub)
+	scheduleManager.Start()
+
 	// API routes
-	routes.SetupRoutes(app)
+	routes.SetupRoutes(app, wsHub)
 	routes.SetupStaticRoutes(app)
 
 	// 404 handler

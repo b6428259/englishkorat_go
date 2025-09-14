@@ -8,17 +8,20 @@ import (
 
 	"englishkorat_go/database"
 	"englishkorat_go/models"
+	notifsvc "englishkorat_go/services/notifications"
 )
 
 // NotificationScheduler จัดการการส่ง notification อัตโนมัติ
 type NotificationScheduler struct {
 	db *gorm.DB
+	ns *notifsvc.Service
 }
 
 // NewNotificationScheduler สร้าง NotificationScheduler ใหม่
 func NewNotificationScheduler() *NotificationScheduler {
 	return &NotificationScheduler{
 		db: database.DB,
+		ns: notifsvc.NewService(),
 	}
 }
 
@@ -30,11 +33,8 @@ func (ns *NotificationScheduler) StartScheduler() {
 
 	fmt.Println("Notification scheduler started...")
 
-	for {
-		select {
-		case <-ticker.C:
-			ns.CheckUpcomingSessions()
-		}
+	for range ticker.C {
+		ns.CheckUpcomingSessions()
 	}
 }
 
@@ -119,19 +119,19 @@ func (ns *NotificationScheduler) sendUpcomingClassNotification(session models.Sc
 		users = append(users, assignedTeacher)
 	}
 
-	// สร้าง notification สำหรับแต่ละคน
-	for _, user := range users {
-		notification := models.Notification{
-			UserID:    user.ID,
-			Title:     "Upcoming Class",
-			TitleTh:   "เรียนจะเริ่มเร็วๆ นี้",
-			Message:   fmt.Sprintf("Your class '%s' will start in %s at %s", schedule.ScheduleName, timeLabel, session.Start_time.Format("15:04")),
-			MessageTh: fmt.Sprintf("คลาส '%s' ของคุณจะเริ่มในอีก %s เวลา %s", schedule.ScheduleName, ns.translateTimeLabel(timeLabel), session.Start_time.Format("15:04")),
-			Type:      "info",
+	// ส่ง notification ผ่าน service (รองรับ queue และ websocket broadcast)
+	if len(users) > 0 {
+		userIDs := make([]uint, 0, len(users))
+		for _, u := range users {
+			userIDs = append(userIDs, u.ID)
 		}
-
-		if err := ns.db.Create(&notification).Error; err != nil {
-			fmt.Printf("Error creating notification for user %d: %v\n", user.ID, err)
+		title := "Upcoming Class"
+		titleTh := "เรียนจะเริ่มเร็วๆ นี้"
+		msg := fmt.Sprintf("Your class '%s' will start in %s at %s", schedule.ScheduleName, timeLabel, session.Start_time.Format("15:04"))
+		msgTh := fmt.Sprintf("คลาส '%s' ของคุณจะเริ่มในอีก %s เวลา %s", schedule.ScheduleName, ns.translateTimeLabel(timeLabel), session.Start_time.Format("15:04"))
+		q := notifsvc.QueuedForController(title, titleTh, msg, msgTh, "info")
+		if err := ns.ns.EnqueueOrCreate(userIDs, q); err != nil {
+			fmt.Printf("Error creating notifications for session %d: %v\n", session.ID, err)
 		}
 	}
 
@@ -216,16 +216,8 @@ func (ns *NotificationScheduler) sendDailyReminderNotification(userID uint, sess
 			session.Start_time.Format("15:04"))
 	}
 
-	notification := models.Notification{
-		UserID:    userID,
-		Title:     "Daily Schedule Reminder",
-		TitleTh:   "เตือนตารางเรียนประจำวัน",
-		Message:   messageEn,
-		MessageTh: messageTh,
-		Type:      "info",
-	}
-
-	if err := ns.db.Create(&notification).Error; err != nil {
+	q := notifsvc.QueuedForController("Daily Schedule Reminder", "เตือนตารางเรียนประจำวัน", messageEn, messageTh, "info")
+	if err := ns.ns.EnqueueOrCreate([]uint{userID}, q); err != nil {
 		fmt.Printf("Error creating daily reminder for user %d: %v\n", userID, err)
 	}
 }
@@ -263,16 +255,18 @@ func (ns *NotificationScheduler) sendMissedSessionNotification(session models.Sc
 		return
 	}
 
-	for _, admin := range admins {
-		notification := models.Notification{
-			UserID:    admin.ID,
-			Title:     "Missed Session Alert",
-			TitleTh:   "แจ้งเตือน Session พลาด",
-			Message:   fmt.Sprintf("Session '%s' on %s was missed (no-show)", session.Schedule.ScheduleName, session.Session_date.Format("2006-01-02")),
-			MessageTh: fmt.Sprintf("Session '%s' วันที่ %s พลาด (no-show)", session.Schedule.ScheduleName, session.Session_date.Format("2006-01-02")),
-			Type:      "warning",
+	if len(admins) > 0 {
+		userIDs := make([]uint, 0, len(admins))
+		for _, a := range admins {
+			userIDs = append(userIDs, a.ID)
 		}
-
-		ns.db.Create(&notification)
+		title := "Missed Session Alert"
+		titleTh := "แจ้งเตือน Session พลาด"
+		msg := fmt.Sprintf("Session '%s' on %s was missed (no-show)", session.Schedule.ScheduleName, session.Session_date.Format("2006-01-02"))
+		msgTh := fmt.Sprintf("Session '%s' วันที่ %s พลาด (no-show)", session.Schedule.ScheduleName, session.Session_date.Format("2006-01-02"))
+		q := notifsvc.QueuedForController(title, titleTh, msg, msgTh, "warning")
+		if err := ns.ns.EnqueueOrCreate(userIDs, q); err != nil {
+			fmt.Printf("Error creating missed-session notifications: %v\n", err)
+		}
 	}
 }

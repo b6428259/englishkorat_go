@@ -47,6 +47,9 @@ type Config struct {
 	// Logging
 	LogLevel string
 	LogFile  string
+
+	// Feature Toggles
+	UseRedisNotifications bool
 }
 
 func (c *Config) GetDSN() string {
@@ -152,6 +155,8 @@ func LoadConfig() {
 
 		LogLevel: getVal("LOG_LEVEL", "info"),
 		LogFile:  getVal("LOG_FILE", "logs/app.log"),
+
+		UseRedisNotifications: strings.ToLower(getVal("USE_REDIS_NOTIFICATIONS", "false")) == "true",
 	}
 
 	validateConfig(AppConfig, useSSM)

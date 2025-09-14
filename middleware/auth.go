@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"englishkorat_go/config"
 	"englishkorat_go/database"
 	"englishkorat_go/models"
@@ -65,6 +66,18 @@ func JWTMiddleware() fiber.Handler {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"error": "Invalid token",
 			})
+		}
+
+		// Check blacklist in Redis
+		rc := database.GetRedisClient()
+		if rc != nil {
+			ctx := context.Background()
+			key := "blacklist:jwt:" + tokenString
+			val, err := rc.Get(ctx, key).Result()
+			if err == nil && val == "1" {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Token revoked"})
+			}
+			// ignore Redis errors and continue (fail open)
 		}
 
 		claims, ok := token.Claims.(*Claims)
