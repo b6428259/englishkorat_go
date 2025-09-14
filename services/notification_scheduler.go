@@ -8,17 +8,20 @@ import (
 
 	"englishkorat_go/database"
 	"englishkorat_go/models"
+	notifsvc "englishkorat_go/services/notifications"
 )
 
 // NotificationScheduler จัดการการส่ง notification อัตโนมัติ
 type NotificationScheduler struct {
 	db *gorm.DB
+	ns *notifsvc.Service
 }
 
 // NewNotificationScheduler สร้าง NotificationScheduler ใหม่
 func NewNotificationScheduler() *NotificationScheduler {
 	return &NotificationScheduler{
 		db: database.DB,
+		ns: notifsvc.NewService(),
 	}
 }
 
@@ -30,11 +33,8 @@ func (ns *NotificationScheduler) StartScheduler() {
 
 	fmt.Println("Notification scheduler started...")
 
-	for {
-		select {
-		case <-ticker.C:
-			ns.CheckUpcomingSessions()
-		}
+	for range ticker.C {
+		ns.CheckUpcomingSessions()
 	}
 }
 
@@ -57,46 +57,13 @@ func (ns *NotificationScheduler) CheckUpcomingSessions() {
 		return
 	}
 
-	for _, session := range sessions {
-		// ส่งแจ้งเตือนทันที (ไม่ต้องเช็ก hasNotificationBeenSent ตอนเทสก็ได้)
-		ns.sendUpcomingClassNotification(session, 5, "5 minutes")
+		for _, session := range sessions {
+			// ตรวจสอบว่าได้ส่ง notification แล้วหรือยัง
+			if !ns.hasNotificationBeenSent(session.ID, notifTime.minutes) {
+				ns.sendUpcomingClassNotification(session, notifTime.minutes, notifTime.label)
+			}
+		}
 	}
-
-	// now := time.Now()
-
-	// // กำหนดช่วงเวลาที่จะแจ้งเตือน (30 นาที และ 60 นาที)
-	// notificationTimes := []struct {
-	// 	minutes int
-	// 	label   string
-	// }{
-	// 	{30, "30 minutes"},
-	// 	{60, "1 hour"},
-	// }
-
-	// for _, notifTime := range notificationTimes {
-	// 	targetTime := now.Add(time.Duration(notifTime.minutes) * time.Minute)
-
-	// 	// หา sessions ที่จะเริ่มในช่วงเวลาที่กำหนด (±5 นาที)
-	// 	startRange := targetTime.Add(-5 * time.Minute)
-	// 	endRange := targetTime.Add(5 * time.Minute)
-
-	// 	var sessions []models.Schedule_Sessions
-	// 	err := ns.db.Where("start_time BETWEEN ? AND ? AND status = ?",
-	// 		startRange, endRange, "confirmed").
-	// 		Find(&sessions).Error
-
-	// 	if err != nil {
-	// 		fmt.Printf("Error checking upcoming sessions: %v\n", err)
-	// 		continue
-	// 	}
-
-	// 	for _, session := range sessions {
-	// 		// ตรวจสอบว่าได้ส่ง notification แล้วหรือยัง
-	// 		if !ns.hasNotificationBeenSent(session.ID, notifTime.minutes) {
-	// 			ns.sendUpcomingClassNotification(session, notifTime.minutes, notifTime.label)
-	// 		}
-	// 	}
-	// }
 }
 
 // hasNotificationBeenSent ตรวจสอบว่าได้ส่ง notification แล้วหรือยัง
@@ -120,108 +87,75 @@ func (ns *NotificationScheduler) sendUpcomingClassNotification(session models.Sc
 	
 	// โหลด schedule
 	var schedule models.Schedules
-	if err := ns.db.Preload("Course").First(&schedule, session.ScheduleID).Error; err != nil {
-		fmt.Printf("Error fetching schedule: %v\n", err)
+	if err := ns.db.Preload("Group.Course").First(&schedule, session.ScheduleID).Error; err != nil {
+		fmt.Printf("Error fetching schedule for session %d: %v\n", session.ID, err)
 		return
 	}
 
-	// หา group ทั้งหมดของ course/session
-	var studentGroups []models.Student_Group
-	if err := ns.db.Where("course_id = ?", schedule.CourseID).Find(&studentGroups).Error; err != nil {
-		fmt.Printf("Error fetching student groups: %v\n", err)
-		return
-	}
-
-	// สร้าง instance ของ LineMessagingService
-	lineSvc := NewLineMessagingService()
-
-	for _, group := range studentGroups {
-    var lineGroup models.LineGroup
-    if err := ns.db.Where("group_name = ?", group.GroupName).First(&lineGroup).Error; err != nil {
-        fmt.Printf("No LINE group mapping found for group '%s'\n", group.GroupName)
-        continue
-    }
-
-    msg := fmt.Sprintf("⏰ คลาสจะเริ่มใน %d นาที\n📚 %s\n🕒 %s",
-        minutes, schedule.ScheduleName, session.Start_time.Format("15:04"))
-
-    if err := lineSvc.SendLineMessageToGroup(lineGroup.Token, msg); err != nil {
-        fmt.Printf("Error sending LINE message to group %s: %v\n", group.GroupName, err)
-    }
-}
+	// ดึงรายชื่อผู้เข้าร่วม
+	var users []models.User
 	
-	// // 1) ดึงข้อมูล schedule + course
-	// var schedule models.Schedules
-	// if err := ns.db.Preload("Course").First(&schedule, session.ScheduleID).Error; err != nil {
-	// 	fmt.Printf("Error fetching schedule for session %d: %v\n", session.ID, err)
-	// 	return
-	// }
+	// For class schedules - get users from group members
+	if schedule.GroupID != nil {
+		var groupMembers []models.GroupMember
+		err := ns.db.Preload("Student.User").Where("group_id = ?", *schedule.GroupID).Find(&groupMembers).Error
+		if err != nil {
+			fmt.Printf("Error fetching group members for group %d: %v\n", *schedule.GroupID, err)
+			return
+		}
+		
+		for _, member := range groupMembers {
+			if member.Student.UserID != nil {
+				var user models.User
+				if err := ns.db.First(&user, *member.Student.UserID).Error; err == nil {
+					users = append(users, user)
+				}
+			}
+		}
+	} else {
+		// For event/appointment schedules - get participants
+		var participants []models.ScheduleParticipant
+		err := ns.db.Preload("User").Where("schedule_id = ?", schedule.ID).Find(&participants).Error
+		if err != nil {
+			fmt.Printf("Error fetching participants for schedule %d: %v\n", schedule.ID, err)
+			return
+		}
+		
+		for _, participant := range participants {
+			users = append(users, participant.User)
+		}
+	}
 
-	// // 2) ดึงข้อมูล group ที่ผูกกับ course
-	// var studentGroup models.Student_Group
-	// if err := ns.db.Where("course_id = ?", schedule.CourseID).First(&studentGroup).Error; err != nil {
-	// 	fmt.Printf("No student group found for course %d\n", schedule.CourseID)
-	// } else {
-	// 	// 3) ดึง token ของ LINE group จากตาราง line_groups (หรือ mapping table)
-	// 	var lineGroup models.LineGroup
-	// 	if err := ns.db.Where("group_name = ?", studentGroup.GroupName).First(&lineGroup).Error; err == nil {
-	// 		// 4) ส่งข้อความเข้า LINE group นั้น
-	// 		lineMsg := fmt.Sprintf(
-	// 			"📢 แจ้งเตือนล่วงหน้า %s\n👥 กลุ่ม: %s\n📚 คลาส: %s\n🕒 เวลาเริ่ม: %s",
-	// 			ns.translateTimeLabel(timeLabel),
-	// 			studentGroup.GroupName,
-	// 			schedule.ScheduleName,
-	// 			session.Start_time.Format("15:04"),
-	// 		)
+	// เพิ่มครูที่ถูก assign (ใช้ default teacher หรือ teacher specific สำหรับ session)
+	teacherID := session.AssignedTeacherID
+	if teacherID == nil {
+		teacherID = schedule.DefaultTeacherID
+	}
+	
+	if teacherID != nil {
+		var assignedTeacher models.User
+		if err := ns.db.First(&assignedTeacher, *teacherID).Error; err == nil {
+			users = append(users, assignedTeacher)
+		}
+	}
 
-	// 		if err := SendLineNotifyToGroup(lineMsg, lineGroup.Token); err != nil {
-	// 			fmt.Printf("Error sending LINE notify to group '%s': %v\n", studentGroup.GroupName, err)
-	// 		}
-	// 	} else {
-	// 		fmt.Printf("No LINE group mapping found for group name '%s'\n", studentGroup.GroupName)
-	// 	}
-	// }
+	// ส่ง notification ผ่าน service (รองรับ queue และ websocket broadcast)
+	if len(users) > 0 {
+		userIDs := make([]uint, 0, len(users))
+		for _, u := range users {
+			userIDs = append(userIDs, u.ID)
+		}
+		title := "Upcoming Class"
+		titleTh := "เรียนจะเริ่มเร็วๆ นี้"
+		msg := fmt.Sprintf("Your class '%s' will start in %s at %s", schedule.ScheduleName, timeLabel, session.Start_time.Format("15:04"))
+		msgTh := fmt.Sprintf("คลาส '%s' ของคุณจะเริ่มในอีก %s เวลา %s", schedule.ScheduleName, ns.translateTimeLabel(timeLabel), session.Start_time.Format("15:04"))
+		q := notifsvc.QueuedForController(title, titleTh, msg, msgTh, "info")
+		if err := ns.ns.EnqueueOrCreate(userIDs, q); err != nil {
+			fmt.Printf("Error creating notifications for session %d: %v\n", session.ID, err)
+		}
+	}
 
-	// // 5) ดึงรายชื่อผู้เข้าร่วม (สำหรับสร้าง notification ใน DB)
-	// var users []models.User
-	// err := ns.db.Table("users").
-	// 	Joins("JOIN user_in_courses ON user_in_courses.user_id = users.id").
-	// 	Where("user_in_courses.course_id = ?", schedule.CourseID).
-	// 	Find(&users).Error
-	// if err != nil {
-	// 	fmt.Printf("Error fetching users for course %d: %v\n", schedule.CourseID, err)
-	// 	return
-	// }
-
-	// // เพิ่มครูที่ถูก assign
-	// var assignedTeacher models.User
-	// if err := ns.db.First(&assignedTeacher, schedule.AssignedToUserID).Error; err == nil {
-	// 	users = append(users, assignedTeacher)
-	// }
-
-	// // 6) สร้าง notification สำหรับแต่ละคนใน DB
-	// for _, user := range users {
-	// 	notification := models.Notification{
-	// 		UserID:    user.ID,
-	// 		Title:     "Upcoming Class",
-	// 		TitleTh:   "เรียนจะเริ่มเร็วๆ นี้",
-	// 		Message:   fmt.Sprintf("Your class '%s' will start in %s at %s",
-	// 			schedule.ScheduleName,
-	// 			timeLabel,
-	// 			session.Start_time.Format("15:04")),
-	// 		MessageTh: fmt.Sprintf("คลาส '%s' ของคุณจะเริ่มในอีก %s เวลา %s",
-	// 			schedule.ScheduleName,
-	// 			ns.translateTimeLabel(timeLabel),
-	// 			session.Start_time.Format("15:04")),
-	// 		Type: "info",
-	// 	}
-
-	// 	if err := ns.db.Create(&notification).Error; err != nil {
-	// 		fmt.Printf("Error creating notification for user %d: %v\n", user.ID, err)
-	// 	}
-	// }
-
-	// fmt.Printf("Sent upcoming class notifications for session %d (%s before)\n", session.ID, timeLabel)
+	fmt.Printf("Sent upcoming class notifications for session %d (%s before)\n", session.ID, timeLabel)
 }
 
 
@@ -261,19 +195,43 @@ func (ns *NotificationScheduler) SendDailyScheduleReminder() {
 	for _, session := range sessions {
 		// ดึงรายชื่อผู้เข้าร่วม
 		var users []models.User
-		err := ns.db.Table("users").
-			Joins("JOIN user_in_courses ON user_in_courses.user_id = users.id").
-			Where("user_in_courses.course_id = ?", session.Schedule.CourseID).
-			Find(&users).Error
-
-		if err != nil {
-			continue
+		
+		// For class schedules - get users from group members
+		if session.Schedule.GroupID != nil {
+			var groupMembers []models.GroupMember
+			err := ns.db.Preload("Student.User").Where("group_id = ?", *session.Schedule.GroupID).Find(&groupMembers).Error
+			if err == nil {
+				for _, member := range groupMembers {
+					if member.Student.UserID != nil {
+						var user models.User
+						if err := ns.db.First(&user, *member.Student.UserID).Error; err == nil {
+							users = append(users, user)
+						}
+					}
+				}
+			}
+		} else {
+			// For event/appointment schedules - get participants
+			var participants []models.ScheduleParticipant
+			err := ns.db.Preload("User").Where("schedule_id = ?", session.Schedule.ID).Find(&participants).Error
+			if err == nil {
+				for _, participant := range participants {
+					users = append(users, participant.User)
+				}
+			}
 		}
 
-		// เพิ่มครูที่ถูก assign
-		var assignedTeacher models.User
-		if err := ns.db.First(&assignedTeacher, session.Schedule.AssignedToUserID).Error; err == nil {
-			users = append(users, assignedTeacher)
+		// เพิ่มครูที่ถูก assign (ใช้ default teacher หรือ teacher specific สำหรับ session)
+		teacherID := session.AssignedTeacherID
+		if teacherID == nil {
+			teacherID = session.Schedule.DefaultTeacherID
+		}
+		
+		if teacherID != nil {
+			var assignedTeacher models.User
+			if err := ns.db.First(&assignedTeacher, *teacherID).Error; err == nil {
+				users = append(users, assignedTeacher)
+			}
 		}
 
 		for _, user := range users {
@@ -303,16 +261,8 @@ func (ns *NotificationScheduler) sendDailyReminderNotification(userID uint, sess
 			session.Start_time.Format("15:04"))
 	}
 
-	notification := models.Notification{
-		UserID:    userID,
-		Title:     "Daily Schedule Reminder",
-		TitleTh:   "เตือนตารางเรียนประจำวัน",
-		Message:   messageEn,
-		MessageTh: messageTh,
-		Type:      "info",
-	}
-
-	if err := ns.db.Create(&notification).Error; err != nil {
+	q := notifsvc.QueuedForController("Daily Schedule Reminder", "เตือนตารางเรียนประจำวัน", messageEn, messageTh, "info")
+	if err := ns.ns.EnqueueOrCreate([]uint{userID}, q); err != nil {
 		fmt.Printf("Error creating daily reminder for user %d: %v\n", userID, err)
 	}
 }
@@ -350,16 +300,18 @@ func (ns *NotificationScheduler) sendMissedSessionNotification(session models.Sc
 		return
 	}
 
-	for _, admin := range admins {
-		notification := models.Notification{
-			UserID:    admin.ID,
-			Title:     "Missed Session Alert",
-			TitleTh:   "แจ้งเตือน Session พลาด",
-			Message:   fmt.Sprintf("Session '%s' on %s was missed (no-show)", session.Schedule.ScheduleName, session.Session_date.Format("2006-01-02")),
-			MessageTh: fmt.Sprintf("Session '%s' วันที่ %s พลาด (no-show)", session.Schedule.ScheduleName, session.Session_date.Format("2006-01-02")),
-			Type:      "warning",
+	if len(admins) > 0 {
+		userIDs := make([]uint, 0, len(admins))
+		for _, a := range admins {
+			userIDs = append(userIDs, a.ID)
 		}
-
-		ns.db.Create(&notification)
+		title := "Missed Session Alert"
+		titleTh := "แจ้งเตือน Session พลาด"
+		msg := fmt.Sprintf("Session '%s' on %s was missed (no-show)", session.Schedule.ScheduleName, session.Session_date.Format("2006-01-02"))
+		msgTh := fmt.Sprintf("Session '%s' วันที่ %s พลาด (no-show)", session.Schedule.ScheduleName, session.Session_date.Format("2006-01-02"))
+		q := notifsvc.QueuedForController(title, titleTh, msg, msgTh, "warning")
+		if err := ns.ns.EnqueueOrCreate(userIDs, q); err != nil {
+			fmt.Printf("Error creating missed-session notifications: %v\n", err)
+		}
 	}
 }

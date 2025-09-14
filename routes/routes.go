@@ -3,12 +3,14 @@ package routes
 import (
 	"englishkorat_go/controllers"
 	"englishkorat_go/middleware"
+	"englishkorat_go/services/websocket"
 
 	"github.com/gofiber/fiber/v2"
+	fiberws "github.com/gofiber/websocket/v2"
 )
 
 // SetupRoutes configures all application routes
-func SetupRoutes(app *fiber.App) {
+func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	// Initialize controllers
 	authController := &controllers.AuthController{}
 	userController := &controllers.UserController{}
@@ -21,6 +23,8 @@ func SetupRoutes(app *fiber.App) {
 	notificationController := &controllers.NotificationController{}
 	logController := &controllers.LogController{}
 	scheduleController := &controllers.ScheduleController{}
+	groupController := &controllers.GroupController{}
+	wsController := controllers.NewWebSocketController(wsHub)
 
 	// API group
 	api := app.Group("/api")
@@ -33,10 +37,19 @@ func SetupRoutes(app *fiber.App) {
 	public.Get("/courses/:id", courseController.GetCourse)
 	public.Get("/courses/branch/:branch_id", courseController.GetCoursesByBranch)
 
+	// Student Registration - PUBLIC endpoints
+	public.Post("/students/student-register", studentController.PublicRegisterStudent)
+	public.Post("/students/new-register", studentController.NewPublicRegisterStudent) // New structured registration endpoint
+	// Also expose at /api/students/student-register (no auth)
+	api.Post("/students/student-register", studentController.PublicRegisterStudent)
+	api.Post("/students/new-register", studentController.NewPublicRegisterStudent) // New structured registration endpoint
+
 	// Authentication routes (no middleware)
 	auth := api.Group("/auth")
 	auth.Post("/login", authController.Login)
 	auth.Post("/reset-password-token", authController.ResetPasswordWithToken) // Public endpoint for token-based reset
+	// Allow profile retrieval via /api/auth/profile using the same JWT middleware
+	auth.Get("/profile", middleware.JWTMiddleware(), authController.GetProfile)
 
 	// Protected routes (require authentication)
 	protected := api.Group("/", middleware.JWTMiddleware())
@@ -44,6 +57,8 @@ func SetupRoutes(app *fiber.App) {
 	// Profile routes (authenticated users)
 	protected.Get("/profile", authController.GetProfile)
 	protected.Put("/profile/password", authController.ChangePassword)
+	// Logout - blacklist token for 24 hours
+	protected.Post("/auth/logout", authController.Logout)
 
 	// Password reset routes (admin/owner only)
 	passwordReset := protected.Group("/password-reset", middleware.RequireOwnerOrAdmin())
@@ -85,6 +100,14 @@ func SetupRoutes(app *fiber.App) {
 	students.Put("/:id", middleware.RequireTeacherOrAbove(), studentController.UpdateStudent)
 	students.Delete("/:id", middleware.RequireOwnerOrAdmin(), studentController.DeleteStudent)
 	students.Get("/branch/:branch_id", middleware.RequireTeacherOrAbove(), studentController.GetStudentsByBranch)
+
+	// New admin endpoints for the redesigned registration workflow
+	students.Patch("/:id", middleware.RequireTeacherOrAbove(), studentController.UpdateStudentInfo)               // Complete student information
+	students.Get("/by-status/:status", middleware.RequireTeacherOrAbove(), studentController.GetStudentsByStatus) // Filter by registration status
+	students.Post("/:id/exam-scores", middleware.RequireTeacherOrAbove(), studentController.SetExamScores)        // Record exam scores
+
+	// Backward/alternate path for Update as per docs
+	api.Put("/v1/students/:id", middleware.JWTMiddleware(), middleware.RequireTeacherOrAbove(), studentController.UpdateStudent)
 
 	// Teacher management routes
 	teachers := protected.Group("/teachers")
@@ -134,6 +157,9 @@ func SetupRoutes(app *fiber.App) {
 	// Schedule CRUD operations
 	schedules.Post("/", middleware.RequireOwnerOrAdmin(), scheduleController.CreateSchedule)
 	schedules.Get("/", middleware.RequireOwnerOrAdmin(), scheduleController.GetSchedules)
+	schedules.Get("/teachers", middleware.RequireTeacherOrAbove(), scheduleController.GetTeachersSchedules)
+	// Alias singular path as requested
+	schedules.Get("/teacher", middleware.RequireTeacherOrAbove(), scheduleController.GetTeachersSchedules)
 	schedules.Get("/my", scheduleController.GetMySchedules)             // ดู schedule ของตัวเอง
 	schedules.Patch("/:id/confirm", scheduleController.ConfirmSchedule) // ยืนยัน schedule
 
@@ -145,6 +171,34 @@ func SetupRoutes(app *fiber.App) {
 	// Comment management
 	schedules.Post("/comments", scheduleController.AddComment) // เพิ่ม comment
 	schedules.Get("/comments", scheduleController.GetComments) // ดู comments
+
+	// Calendar endpoint
+	schedules.Get("/calendar", middleware.RequireTeacherOrAbove(), scheduleController.GetCalendarView)
+
+	// Group management routes
+	groups := protected.Group("/groups")
+	groups.Get("/", middleware.RequireTeacherOrAbove(), groupController.GetGroups)
+	groups.Get("/:id", middleware.RequireTeacherOrAbove(), groupController.GetGroup)
+	groups.Post("/", middleware.RequireOwnerOrAdmin(), groupController.CreateGroup)
+	groups.Post("/:id/members", middleware.RequireOwnerOrAdmin(), groupController.AddMemberToGroup)
+	groups.Delete("/:id/members/:student_id", middleware.RequireOwnerOrAdmin(), groupController.RemoveMemberFromGroup)
+	groups.Patch("/:id/payment-status", middleware.RequireOwnerOrAdmin(), groupController.UpdateGroupPaymentStatus)
+
+	// WebSocket routes
+	ws := protected.Group("/ws")
+	ws.Get("/stats", middleware.RequireOwnerOrAdmin(), wsController.GetWebSocketStats)
+
+	// WebSocket connection endpoint - use websocket upgrade middleware
+	app.Use("/ws", func(c *fiber.Ctx) error {
+		// IsWebSocketUpgrade returns true if the client
+		// requested upgrade to the WebSocket protocol.
+		if fiberws.IsWebSocketUpgrade(c) {
+			c.Locals("allowed", true)
+			return c.Next()
+		}
+		return fiber.ErrUpgradeRequired
+	})
+	app.Get("/ws", wsController.WebSocketHandler())
 }
 
 // SetupStaticRoutes configures static file serving

@@ -1,33 +1,42 @@
 package controllers
 
 import (
+	"englishkorat_go/database"
+	"englishkorat_go/models"
+	"englishkorat_go/services"
 	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-
-	"englishkorat_go/database"
-	"englishkorat_go/models"
-	"englishkorat_go/services"
 )
 
 type CreateScheduleRequest struct {
-	CourseID              uint      `json:"course_id" validate:"required"`
-	AssignedToUserID      uint      `json:"assigned_to_teacher_id" validate:"required"`
-	RoomID                uint      `json:"room_id" validate:"required"`
+	// Core schedule information
 	ScheduleName          string    `json:"schedule_name" validate:"required"`
 	ScheduleType          string    `json:"schedule_type" validate:"required,oneof=class meeting event holiday appointment"`
+	
+	// For class schedules
+	GroupID               *uint     `json:"group_id"` // Required for class schedules
+	
+	// For event/appointment schedules
+	ParticipantUserIDs    []uint    `json:"participant_user_ids"` // User IDs for events/appointments
+	
+	// Schedule timing
 	RecurringPattern      string    `json:"recurring_pattern" validate:"required,oneof=daily weekly bi-weekly monthly yearly custom"`
 	TotalHours            int       `json:"total_hours" validate:"required,min=1"`
 	HoursPerSession       int       `json:"hours_per_session" validate:"required,min=1"`
 	SessionPerWeek        int       `json:"session_per_week" validate:"required,min=1"`
-	MaxStudents           int       `json:"max_students" validate:"required,min=1"`
 	StartDate             time.Time `json:"start_date" validate:"required"`
 	EstimatedEndDate      time.Time `json:"estimated_end_date" validate:"required"`
+	
+	// Default assignments
+	DefaultTeacherID      *uint     `json:"default_teacher_id"`
+	DefaultRoomID         *uint     `json:"default_room_id"`
+	
+	// Settings
 	AutoRescheduleHoliday bool      `json:"auto_reschedule"`
 	Notes                 string    `json:"notes"`
-	UserInCourseIDs       []uint    `json:"user_in_course_ids" validate:"required"`
 	SessionStartTime      string    `json:"session_start_time" validate:"required"` // เวลาเริ่มต้นของแต่ละ session เช่น "09:00"
 	CustomRecurringDays   []int     `json:"custom_recurring_days,omitempty"`        // สำหรับ custom pattern [0=วันอาทิตย์, 1=วันจันทร์, ...]
 }
@@ -54,73 +63,76 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Only admin and owner can create schedules"})
 	}
 
+	userID := c.Locals("user_id").(uint)
+
 	var req CreateScheduleRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// ตรวจสอบว่า assigned teacher มีอยู่จริง
-	var assignedUser models.User
-	if err := database.DB.Where("id = ? AND role IN ?", req.AssignedToUserID, []string{"teacher", "admin", "owner"}).First(&assignedUser).Error; err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Assigned user not found or not authorized to teach"})
-	}
-
-	// ตรวจสอบ room availability สำหรับ type = class
+	// Validate schedule type specific requirements
 	if req.ScheduleType == "class" {
-		conflictExists, err := services.CheckRoomConflict(req.RoomID, req.StartDate, req.EstimatedEndDate, req.SessionStartTime, req.HoursPerSession, req.RecurringPattern, req.CustomRecurringDays)
-		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to check room conflict"})
+		if req.GroupID == nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "group_id is required for class schedules"})
 		}
-		if conflictExists {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Room conflict detected for the specified time slots"})
+		
+		// Validate that the group exists and has members with proper payment status
+		var group models.Group
+		if err := database.DB.Preload("Members").First(&group, *req.GroupID).Error; err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Group not found"})
+		}
+		
+		// Check if group has members with appropriate payment status
+		hasEligibleMembers := false
+		for _, member := range group.Members {
+			if member.PaymentStatus == "deposit_paid" || member.PaymentStatus == "fully_paid" {
+				hasEligibleMembers = true
+				break
+			}
+		}
+		
+		if !hasEligibleMembers {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Group must have at least one member with deposit paid or fully paid status"})
+		}
+	} else {
+		// For event/appointment schedules
+		if len(req.ParticipantUserIDs) == 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "participant_user_ids is required for event/appointment schedules"})
 		}
 	}
 
-	// เริ่ม transaction ก่อนใช้งาน
+	// ตรวจสอบว่า default teacher มีอยู่จริง (ถ้าระบุ)
+	if req.DefaultTeacherID != nil {
+		var teacher models.User
+		if err := database.DB.Where("id = ? AND role IN ?", *req.DefaultTeacherID, []string{"teacher", "admin", "owner"}).First(&teacher).Error; err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Default teacher not found or not authorized to teach"})
+		}
+	}
+
+	// เริ่ม transaction
 	tx := database.DB.Begin()
 
-	// Ensure a primary User_inCourse exists for the assigned teacher/student list
-	// Create or get user_in_course for the first provided user id
-	var primaryUIC models.User_inCourse
-	if len(req.UserInCourseIDs) == 0 {
+	// Get admin user for assignment tracking
+	var assignedUser models.User
+	if err := tx.First(&assignedUser, userID).Error; err != nil {
 		tx.Rollback()
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "user_in_course_ids must not be empty"})
-	}
-	primaryUserID := req.UserInCourseIDs[0]
-	if err := tx.Where("user_id = ? AND course_id = ?", primaryUserID, req.CourseID).First(&primaryUIC).Error; err != nil {
-		// create it
-		var primaryUser models.User
-		if err := tx.First(&primaryUser, primaryUserID).Error; err != nil {
-			tx.Rollback()
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("User ID %d not found", primaryUserID)})
-		}
-		role := "student"
-		if primaryUser.Role == "teacher" || primaryUser.Role == "admin" || primaryUser.Role == "owner" {
-			role = "teacher"
-		}
-		primaryUIC = models.User_inCourse{UserID: primaryUserID, CourseID: req.CourseID, Role: role, Status: "enrolled"}
-		if err := tx.Create(&primaryUIC).Error; err != nil {
-			tx.Rollback()
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create primary user_in_course"})
-		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to get user info"})
 	}
 
 	// สร้าง schedule
 	schedule := models.Schedules{
-		CourseID:                req.CourseID,
-		User_inCourseID:         primaryUIC.ID,
-		AssignedToUserID:        req.AssignedToUserID,
-		RoomID:                  req.RoomID,
 		ScheduleName:            req.ScheduleName,
 		ScheduleType:            req.ScheduleType,
+		GroupID:                 req.GroupID,
+		CreatedByUserID:         &userID,
 		Recurring_pattern:       req.RecurringPattern,
 		Total_hours:             req.TotalHours,
 		Hours_per_session:       req.HoursPerSession,
 		Session_per_week:        req.SessionPerWeek,
-		Max_students:            req.MaxStudents,
-		Current_students:        len(req.UserInCourseIDs),
 		Start_date:              req.StartDate,
 		Estimated_end_date:      req.EstimatedEndDate,
+		DefaultTeacherID:        req.DefaultTeacherID,
+		DefaultRoomID:           req.DefaultRoomID,
 		Status:                  "assigned", // เริ่มต้นเป็น assigned
 		Auto_Reschedule_holiday: req.AutoRescheduleHoliday,
 		Notes:                   req.Notes,
@@ -133,29 +145,30 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create schedule"})
 	}
 
-	// Ensure User_inCourse records exist for all provided users
-	for _, userID := range req.UserInCourseIDs {
-		var user models.User
-		if err := tx.First(&user, userID).Error; err != nil {
-			tx.Rollback()
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("User ID %d not found", userID)})
-		}
-
-		var uic models.User_inCourse
-		if err := tx.Where("user_id = ? AND course_id = ?", userID, req.CourseID).First(&uic).Error; err != nil {
-			role := "student"
-			if user.Role == "teacher" || user.Role == "admin" || user.Role == "owner" {
-				role = "teacher"
-			}
-			uic = models.User_inCourse{
-				UserID:   userID,
-				CourseID: req.CourseID,
-				Role:     role,
-				Status:   "enrolled",
-			}
-			if err := tx.Create(&uic).Error; err != nil {
+	// For event/appointment schedules - create participant records
+	if req.ScheduleType != "class" && len(req.ParticipantUserIDs) > 0 {
+		for _, participantID := range req.ParticipantUserIDs {
+			var user models.User
+			if err := tx.First(&user, participantID).Error; err != nil {
 				tx.Rollback()
-				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to add users to course"})
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("Participant user ID %d not found", participantID)})
+			}
+
+			participant := models.ScheduleParticipant{
+				ScheduleID: schedule.ID,
+				UserID:     participantID,
+				Role:       "participant",
+				Status:     "invited",
+			}
+
+			// Set organizer role for the creator
+			if participantID == userID {
+				participant.Role = "organizer"
+			}
+
+			if err := tx.Create(&participant).Error; err != nil {
+				tx.Rollback()
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to add participants to schedule"})
 			}
 		}
 	}
@@ -167,49 +180,50 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate sessions: " + err.Error()})
 	}
 
-	// ดึงวันหยุดถ้าเปิด auto reschedule
-	var holidays []time.Time
-	if req.AutoRescheduleHoliday {
-		holidays, err = services.GetThaiHolidays(req.StartDate.Year(), req.EstimatedEndDate.Year())
-		if err != nil {
-			// ไม่ rollback เพราะไม่ใช่ error ร้ายแรง
-			fmt.Printf("Warning: Failed to fetch holidays: %v\n", err)
-		}
-	}
-
-	// Reschedule sessions ที่ตรงกับวันหยุด
-	if len(holidays) > 0 {
-		sessions = services.RescheduleSessions(sessions, holidays)
-	}
-
 	// บันทึก sessions
 	for _, session := range sessions {
 		session.ScheduleID = schedule.ID
+		// Use default teacher and room if provided
+		session.AssignedTeacherID = req.DefaultTeacherID
+		session.RoomID = req.DefaultRoomID
+		
 		if err := tx.Create(&session).Error; err != nil {
 			tx.Rollback()
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create sessions"})
 		}
 	}
 
-	// สร้าง notification สำหรับ assigned teacher
-	notification := models.Notification{
-		UserID:    req.AssignedToUserID,
-		Title:     "New Schedule Assignment",
-		TitleTh:   "การมอบหมายตารางเรียนใหม่",
-		Message:   fmt.Sprintf("You have been assigned to schedule: %s. Please confirm to activate.", req.ScheduleName),
-		MessageTh: fmt.Sprintf("คุณได้รับมอบหมายตารางเรียน: %s กรุณายืนยันเพื่อเปิดใช้งาน", req.ScheduleName),
-		Type:      "info",
+	// สร้าง notification สำหรับ assigned users
+	var notificationUserIDs []uint
+	
+	if req.ScheduleType == "class" && req.DefaultTeacherID != nil {
+		// For class schedules - notify the default teacher
+		notificationUserIDs = append(notificationUserIDs, *req.DefaultTeacherID)
+	} else if req.ScheduleType != "class" {
+		// For event/appointment schedules - notify all participants
+		notificationUserIDs = append(notificationUserIDs, req.ParticipantUserIDs...)
 	}
 
-	if err := tx.Create(&notification).Error; err != nil {
-		tx.Rollback()
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create notification"})
+	for _, notifUserID := range notificationUserIDs {
+		notification := models.Notification{
+			UserID:    notifUserID,
+			Title:     "New Schedule Assignment",
+			TitleTh:   "การมอบหมายตารางใหม่",
+			Message:   fmt.Sprintf("You have been assigned to schedule: %s. Please confirm your sessions.", req.ScheduleName),
+			MessageTh: fmt.Sprintf("คุณได้รับมอบหมายตาราง: %s กรุณายืนยัน sessions ของคุณ", req.ScheduleName),
+			Type:      "info",
+		}
+
+		if err := tx.Create(&notification).Error; err != nil {
+			tx.Rollback()
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create notification"})
+		}
 	}
 
 	tx.Commit()
 
 	// โหลดข้อมูลสมบูรณ์เพื่อส่งกลับ
-	database.DB.Preload("Course").Preload("AssignedTo").Preload("Room").First(&schedule, schedule.ID)
+	database.DB.Preload("Group.Course").Preload("DefaultTeacher").Preload("DefaultRoom").Preload("CreatedBy").First(&schedule, schedule.ID)
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"message":  "Schedule created successfully",
@@ -217,10 +231,615 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 	})
 }
 
-// ConfirmSchedule - ยืนยัน schedule (เฉพาะคนที่ถูก assign)
+// GetSchedules - ดู schedule ทั้งหมด (เฉพาะ admin และ owner)
+func (sc *ScheduleController) GetSchedules(c *fiber.Ctx) error {
+	userRole := c.Locals("role")
+	if userRole != "admin" && userRole != "owner" {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Only admin and owner can view all schedules"})
+	}
+
+	var schedules []models.Schedules
+	if err := database.DB.Preload("Group.Course").Preload("DefaultTeacher").Preload("DefaultRoom").Find(&schedules).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch schedules"})
+	}
+
+	return c.JSON(fiber.Map{
+		"schedules": schedules,
+	})
+}
+
+// GetMySchedules - ดู schedule ของตัวเอง
+func (sc *ScheduleController) GetMySchedules(c *fiber.Ctx) error {
+	userID := c.Locals("user_id").(uint)
+	userRole := c.Locals("role").(string)
+
+	var schedules []models.Schedules
+
+	if userRole == "teacher" || userRole == "admin" || userRole == "owner" {
+		// ครูดู schedule ที่ตัวเองถูก assign (ทั้ง default teacher และ session teacher)
+		query := database.DB.Preload("Group.Course").Preload("DefaultRoom").Preload("DefaultTeacher")
+		
+		if userRole == "teacher" {
+			query = query.Where("default_teacher_id = ? OR id IN (SELECT DISTINCT schedule_id FROM schedule_sessions WHERE assigned_teacher_id = ?)", userID, userID)
+		}
+		
+		err := query.Find(&schedules).Error
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch schedules"})
+		}
+	} else {
+		// นักเรียนดู schedule ที่ตัวเองเข้าร่วม (จาก group members)
+		err := database.DB.Table("schedules").
+			Joins("JOIN groups ON groups.id = schedules.group_id").
+			Joins("JOIN group_members ON group_members.group_id = groups.id").
+			Joins("JOIN students ON students.id = group_members.student_id").
+			Where("students.user_id = ? AND schedules.status = ?", userID, "scheduled").
+			Preload("Group.Course").
+			Preload("DefaultRoom").
+			Preload("DefaultTeacher").
+			Find(&schedules).Error
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch schedules"})
+		}
+	}
+
+	// ปรับแต่งข้อมูลสำหรับ student (แสดงแค่ข้อมูลพื้นฐาน)
+	if userRole == "student" {
+		for i := range schedules {
+			if schedules[i].Group != nil && schedules[i].Group.Course.Name != "" {
+				schedules[i].Group.Course = models.Course{
+					Name:  schedules[i].Group.Course.Name,
+					Level: schedules[i].Group.Course.Level,
+				}
+			}
+		}
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"schedules": schedules,
+	})
+}
+
+// GetTeachersSchedules - Enhanced implementation for Group-based model
+func (sc *ScheduleController) GetTeachersSchedules(c *fiber.Ctx) error {
+	// Parse query parameters
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
+	teacherID := c.Query("teacher_id")
+	branchID := c.Query("branch_id")
+	
+	// Build query for schedules with sessions
+	query := database.DB.Table("schedules").
+		Select(`schedules.*, 
+			   schedule_sessions.session_date,
+			   schedule_sessions.start_time,
+			   schedule_sessions.end_time,
+			   schedule_sessions.status as session_status,
+			   schedule_sessions.id as session_id`).
+		Joins("LEFT JOIN schedule_sessions ON schedules.id = schedule_sessions.schedule_id").
+		Where("schedules.schedule_type = ? AND schedules.status IN ?", "class", []string{"scheduled", "assigned"})
+
+	// Apply filters
+	if startDate != "" && endDate != "" {
+		query = query.Where("schedule_sessions.session_date BETWEEN ? AND ?", startDate, endDate)
+	}
+	
+	if teacherID != "" {
+		query = query.Where("schedules.default_teacher_id = ? OR schedule_sessions.assigned_teacher_id = ?", teacherID, teacherID)
+	}
+
+	// Filter by branch through group's course
+	if branchID != "" {
+		query = query.Joins("LEFT JOIN groups ON schedules.group_id = groups.id").
+			Joins("LEFT JOIN courses ON groups.course_id = courses.id").
+			Where("courses.branch_id = ?", branchID)
+	}
+
+	// Get raw results
+	type ScheduleSession struct {
+		models.Schedules
+		SessionDate   *time.Time `json:"session_date"`
+		StartTime     *time.Time `json:"start_time"`
+		EndTime       *time.Time `json:"end_time"`
+		SessionStatus *string    `json:"session_status"`
+		SessionID     *uint      `json:"session_id"`
+	}
+
+	var results []ScheduleSession
+	if err := query.Order("schedule_sessions.session_date ASC, schedule_sessions.start_time ASC").Find(&results).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch teacher schedules"})
+	}
+
+	// Group sessions by schedule and preload relationships
+	scheduleMap := make(map[uint]*models.Schedules)
+	sessionMap := make(map[uint][]models.Schedule_Sessions)
+
+	for _, result := range results {
+		if _, exists := scheduleMap[result.ID]; !exists {
+			scheduleMap[result.ID] = &result.Schedules
+		}
+
+		if result.SessionID != nil {
+			session := models.Schedule_Sessions{
+				BaseModel:    models.BaseModel{ID: *result.SessionID},
+				ScheduleID:   result.ID,
+				Session_date: *result.SessionDate,
+				Start_time:   *result.StartTime,
+				End_time:     *result.EndTime,
+				Status:       *result.SessionStatus,
+			}
+			sessionMap[result.ID] = append(sessionMap[result.ID], session)
+		}
+	}
+
+	// Preload relationships for schedules
+	scheduleIDs := make([]uint, 0, len(scheduleMap))
+	for id := range scheduleMap {
+		scheduleIDs = append(scheduleIDs, id)
+	}
+
+	var schedulesWithRel []models.Schedules
+	if len(scheduleIDs) > 0 {
+		if err := database.DB.Where("id IN ?", scheduleIDs).
+			Preload("Group.Course").
+			Preload("Group.Members.Student").
+			Preload("DefaultTeacher").
+			Preload("DefaultRoom").
+			Find(&schedulesWithRel).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to load schedule relationships"})
+		}
+	}
+
+	// Build response
+	response := make([]map[string]interface{}, 0, len(schedulesWithRel))
+	for _, schedule := range schedulesWithRel {
+		scheduleData := map[string]interface{}{
+			"schedule": schedule,
+			"sessions": sessionMap[schedule.ID],
+		}
+		response = append(response, scheduleData)
+	}
+
+	return c.JSON(fiber.Map{
+		"success":   true,
+		"data":      response,
+		"total":     len(response),
+		"filters": map[string]interface{}{
+			"start_date": startDate,
+			"end_date":   endDate,
+			"teacher_id": teacherID,
+			"branch_id":  branchID,
+		},
+	})
+}
+
+// GetCalendarView - Enhanced implementation for Group-based model
+func (sc *ScheduleController) GetCalendarView(c *fiber.Ctx) error {
+	// Parse query parameters
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
+	viewType := c.Query("view", "month") // month, week, day
+	userRole := c.Locals("role").(string)
+	userID := c.Locals("user_id").(uint)
+	branchID := c.Query("branch_id")
+	includeHolidays := c.Query("include_holidays", "false") == "true"
+
+	// Default date range if not provided
+	if startDate == "" || endDate == "" {
+		now := time.Now()
+		switch viewType {
+		case "week":
+			startDate = now.AddDate(0, 0, -int(now.Weekday())).Format("2006-01-02")
+			endDate = now.AddDate(0, 0, 6-int(now.Weekday())).Format("2006-01-02")
+		case "day":
+			startDate = now.Format("2006-01-02")
+			endDate = now.Format("2006-01-02")
+		default: // month
+			startDate = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Format("2006-01-02")
+			endDate = time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, now.Location()).Format("2006-01-02")
+		}
+	}
+
+	// Build query for sessions
+	query := database.DB.Model(&models.Schedule_Sessions{}).
+		Where("session_date BETWEEN ? AND ?", startDate, endDate).
+		Where("status NOT IN ?", []string{"cancelled", "no-show"})
+
+	// Apply role-based filtering
+	if userRole == "teacher" {
+		// Teachers see only their assigned sessions
+		query = query.Joins("JOIN schedules ON schedule_sessions.schedule_id = schedules.id").
+			Where("schedules.default_teacher_id = ? OR schedule_sessions.assigned_teacher_id = ?", userID, userID)
+	} else if userRole == "student" {
+		// Students see only their group sessions
+		query = query.Joins("JOIN schedules ON schedule_sessions.schedule_id = schedules.id").
+			Joins("JOIN groups ON schedules.group_id = groups.id").
+			Joins("JOIN group_members ON group_members.group_id = groups.id").
+			Joins("JOIN students ON students.id = group_members.student_id").
+			Where("students.user_id = ?", userID)
+	}
+
+	// Admin/Owner can filter by branch
+	if (userRole == "admin" || userRole == "owner") && branchID != "" {
+		query = query.Joins("JOIN schedules ON schedule_sessions.schedule_id = schedules.id").
+			Joins("LEFT JOIN groups ON schedules.group_id = groups.id").
+			Joins("LEFT JOIN courses ON groups.course_id = courses.id").
+			Where("courses.branch_id = ?", branchID)
+	}
+
+	// Get sessions with relationships
+	var sessions []models.Schedule_Sessions
+	if err := query.Preload("Schedule.Group.Course").
+		Preload("Schedule.Group.Members.Student").
+		Preload("AssignedTeacher").
+		Preload("Schedule.DefaultTeacher").
+		Preload("Room").
+		Order("session_date ASC, start_time ASC").
+		Find(&sessions).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch calendar sessions"})
+	}
+
+	// Build calendar events
+	events := make([]map[string]interface{}, 0, len(sessions))
+	for _, session := range sessions {
+		// Determine teacher for the session
+		var teacher *models.User
+		if session.AssignedTeacher != nil {
+			teacher = session.AssignedTeacher
+		} else if session.Schedule.DefaultTeacher != nil {
+			teacher = session.Schedule.DefaultTeacher
+		}
+
+		// Build participants list
+		participants := make([]map[string]interface{}, 0)
+		if session.Schedule.Group != nil {
+			for _, member := range session.Schedule.Group.Members {
+				participants = append(participants, map[string]interface{}{
+					"id":              member.Student.ID,
+					"name":            fmt.Sprintf("%s %s", member.Student.FirstName, member.Student.LastName),
+					"nickname":        member.Student.NicknameEn,
+					"payment_status":  member.PaymentStatus,
+				})
+			}
+		}
+
+		event := map[string]interface{}{
+			"id":           session.ID,
+			"schedule_id":  session.ScheduleID,
+			"title":        session.Schedule.ScheduleName,
+			"date":         session.Session_date.Format("2006-01-02"),
+			"start_time":   session.Start_time.Format("15:04"),
+			"end_time":     session.End_time.Format("15:04"),
+			"status":       session.Status,
+			"session_number": session.Session_number,
+			"week_number":  session.Week_number,
+			"is_makeup":    session.Is_makeup,
+			"type":         "class",
+			"teacher": map[string]interface{}{
+				"id":       nil,
+				"name":     "",
+				"username": "",
+			},
+			"room": map[string]interface{}{
+				"id":   nil,
+				"name": "",
+			},
+			"course": map[string]interface{}{
+				"name":  "",
+				"level": "",
+			},
+			"participants": participants,
+		}
+
+		// Add teacher info
+		if teacher != nil {
+			event["teacher"] = map[string]interface{}{
+				"id":       teacher.ID,
+				"name":     teacher.Username,
+				"username": teacher.Username,
+			}
+		}
+
+		// Add room info
+		if session.Room != nil {
+			event["room"] = map[string]interface{}{
+				"id":   session.Room.ID,
+				"name": session.Room.RoomName,
+			}
+		}
+
+		// Add course info
+		if session.Schedule.Group != nil && session.Schedule.Group.Course.Name != "" {
+			event["course"] = map[string]interface{}{
+				"name":  session.Schedule.Group.Course.Name,
+				"level": session.Schedule.Group.Course.Level,
+			}
+		}
+
+		events = append(events, event)
+	}
+
+	// Include holidays if requested
+	var holidays []map[string]interface{}
+	if includeHolidays {
+		// Parse start and end dates
+		startDateParsed, _ := time.Parse("2006-01-02", startDate)
+		endDateParsed, _ := time.Parse("2006-01-02", endDate)
+		
+		// Get Thai holidays for the date range
+		holidayDates, err := services.GetThaiHolidays(startDateParsed.Year(), endDateParsed.Year())
+		if err == nil {
+			for _, holiday := range holidayDates {
+				if holiday.After(startDateParsed.AddDate(0, 0, -1)) && holiday.Before(endDateParsed.AddDate(0, 0, 1)) {
+					holidays = append(holidays, map[string]interface{}{
+						"date":  holiday.Format("2006-01-02"),
+						"title": "Thai Holiday",
+						"type":  "holiday",
+					})
+				}
+			}
+		}
+	}
+
+	// Build response
+	response := map[string]interface{}{
+		"events":    events,
+		"holidays":  holidays,
+		"view_type": viewType,
+		"date_range": map[string]interface{}{
+			"start": startDate,
+			"end":   endDate,
+		},
+		"total_events": len(events),
+		"user_context": map[string]interface{}{
+			"role":      userRole,
+			"user_id":   userID,
+			"branch_id": branchID,
+		},
+	}
+
+	return c.JSON(fiber.Map{
+		"success": true,
+		"data":    response,
+	})
+}
+
+// GetScheduleSessions - ดู sessions ของ schedule
+func (sc *ScheduleController) GetScheduleSessions(c *fiber.Ctx) error {
+	scheduleID, err := strconv.ParseUint(c.Params("id"), 10, 32)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid schedule ID"})
+	}
+
+	var sessions []models.Schedule_Sessions
+	if err := database.DB.Where("schedule_id = ?", scheduleID).
+		Preload("AssignedTeacher").
+		Preload("Room").
+		Order("session_date ASC, start_time ASC").
+		Find(&sessions).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch sessions"})
+	}
+
+	return c.JSON(fiber.Map{
+		"sessions": sessions,
+	})
+}
+
+// UpdateSessionStatus - อัพเดทสถานะ session
+func (sc *ScheduleController) UpdateSessionStatus(c *fiber.Ctx) error {
+	sessionID, err := strconv.ParseUint(c.Params("id"), 10, 32)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid session ID"})
+	}
+
+	var req struct {
+		Status string `json:"status" validate:"required,oneof=scheduled confirmed pending completed cancelled rescheduled no-show"`
+		Notes  string `json:"notes"`
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	// Find the session
+	var session models.Schedule_Sessions
+	if err := database.DB.Preload("Schedule").First(&session, sessionID).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Session not found"})
+	}
+
+	userID := c.Locals("user_id").(uint)
+	userRole := c.Locals("role").(string)
+
+	// ตรวจสอบสิทธิ์ (teacher ต้องเป็นคนที่ถูก assign หรือเป็น participant)
+	if userRole == "teacher" {
+		// ตรวจสอบสิทธิ์สำหรับ teacher
+		hasPermission := false
+		
+		// สำหรับ class schedules - ตรวจสอบว่าเป็น default teacher หรือ assigned teacher
+		if session.Schedule.ScheduleType == "class" {
+			if (session.Schedule.DefaultTeacherID != nil && *session.Schedule.DefaultTeacherID == userID) ||
+			   (session.AssignedTeacherID != nil && *session.AssignedTeacherID == userID) {
+				hasPermission = true
+			}
+		} else if session.Schedule.ScheduleType != "class" {
+			// สำหรับ event/appointment - ตรวจสอบว่าเป็น participant
+			var participant models.ScheduleParticipant
+			if err := database.DB.Where("schedule_id = ? AND user_id = ?", session.Schedule.ID, userID).First(&participant).Error; err == nil {
+				hasPermission = true
+			}
+		}
+		
+		if !hasPermission {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "You are not assigned to this schedule"})
+		}
+	}
+
+	// Update session status
+	updates := map[string]interface{}{
+		"status": req.Status,
+		"notes":  req.Notes,
+	}
+
+	if req.Status == "confirmed" {
+		now := time.Now()
+		updates["confirmed_at"] = &now
+		updates["confirmed_by_user_id"] = userID
+	}
+
+	if err := database.DB.Model(&session).Updates(updates).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update session status"})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Session status updated successfully",
+	})
+}
+
+// AddComment - เพิ่ม comment ให้ schedule หรือ session
+func (sc *ScheduleController) AddComment(c *fiber.Ctx) error {
+	userID := c.Locals("user_id").(uint)
+
+	var req struct {
+		ScheduleID *uint  `json:"schedule_id"`
+		SessionID  *uint  `json:"session_id"`
+		Comment    string `json:"comment" validate:"required"`
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	if req.ScheduleID == nil && req.SessionID == nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Either schedule_id or session_id is required"})
+	}
+
+	comment := models.Schedules_or_Sessions_Comment{
+		UserID:  userID,
+		Comment: req.Comment,
+	}
+
+	if req.ScheduleID != nil {
+		comment.ScheduleID = *req.ScheduleID
+	}
+	if req.SessionID != nil {
+		comment.SessionID = *req.SessionID
+	}
+
+	if err := database.DB.Create(&comment).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create comment"})
+	}
+
+	// Load with user information
+	database.DB.Preload("User").First(&comment, comment.ID)
+
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+		"message": "Comment added successfully",
+		"comment": comment,
+	})
+}
+
+// GetComments - ดู comments ของ schedule หรือ session
+func (sc *ScheduleController) GetComments(c *fiber.Ctx) error {
+	scheduleID := c.Query("schedule_id")
+	sessionID := c.Query("session_id")
+
+	if scheduleID == "" && sessionID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Either schedule_id or session_id is required"})
+	}
+
+	query := database.DB.Preload("User").Order("created_at DESC")
+
+	if scheduleID != "" {
+		query = query.Where("schedule_id = ?", scheduleID)
+	}
+	if sessionID != "" {
+		query = query.Where("session_id = ?", sessionID)
+	}
+
+	var comments []models.Schedules_or_Sessions_Comment
+	if err := query.Find(&comments).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch comments"})
+	}
+
+	return c.JSON(fiber.Map{
+		"comments": comments,
+	})
+}
+
+// CreateMakeupSession - สร้าง makeup session
+func (sc *ScheduleController) CreateMakeupSession(c *fiber.Ctx) error {
+	userRole := c.Locals("role")
+	if userRole != "admin" && userRole != "owner" && userRole != "teacher" {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Only admin, owner, and teacher can create makeup sessions"})
+	}
+
+	var req CreateMakeupSessionRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	// Find original session
+	var originalSession models.Schedule_Sessions
+	if err := database.DB.First(&originalSession, req.OriginalSessionID).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Original session not found"})
+	}
+
+	// Parse new start time
+	newStartTime, err := time.Parse("15:04", req.NewStartTime)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid time format, use HH:MM"})
+	}
+
+	// Create new session date with the time
+	newStartDateTime := time.Date(
+		req.NewSessionDate.Year(), req.NewSessionDate.Month(), req.NewSessionDate.Day(),
+		newStartTime.Hour(), newStartTime.Minute(), 0, 0, req.NewSessionDate.Location(),
+	)
+	newEndDateTime := newStartDateTime.Add(time.Duration(originalSession.End_time.Sub(originalSession.Start_time)))
+
+	tx := database.DB.Begin()
+
+	// Update original session status
+	originalSession.Status = req.NewSessionStatus
+	originalSession.Cancelling_Reason = req.CancellingReason
+	if err := tx.Save(&originalSession).Error; err != nil {
+		tx.Rollback()
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update original session"})
+	}
+
+	// Create makeup session
+	makeupSession := models.Schedule_Sessions{
+		ScheduleID:            originalSession.ScheduleID,
+		Session_date:          req.NewSessionDate,
+		Start_time:            newStartDateTime,
+		End_time:              newEndDateTime,
+		Session_number:        originalSession.Session_number,
+		Week_number:           originalSession.Week_number,
+		Status:                "scheduled",
+		Is_makeup:             true,
+		Makeup_for_session_id: &originalSession.ID,
+		AssignedTeacherID:     originalSession.AssignedTeacherID,
+		RoomID:                originalSession.RoomID,
+	}
+
+	if err := tx.Create(&makeupSession).Error; err != nil {
+		tx.Rollback()
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create makeup session"})
+	}
+
+	tx.Commit()
+
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+		"message":       "Makeup session created successfully",
+		"makeup_session": makeupSession,
+	})
+}
+
+// ConfirmSchedule - ยืนยัน schedule (เฉพาะคนที่ถูก assign หรือ admin/owner)
 func (sc *ScheduleController) ConfirmSchedule(c *fiber.Ctx) error {
 	userID := c.Locals("user_id")
 	currentUserID := userID.(uint)
+	userRole := c.Locals("role").(string)
 
 	scheduleID, err := strconv.ParseUint(c.Params("id"), 10, 32)
 	if err != nil {
@@ -228,13 +847,31 @@ func (sc *ScheduleController) ConfirmSchedule(c *fiber.Ctx) error {
 	}
 
 	var schedule models.Schedules
-	if err := database.DB.First(&schedule, scheduleID).Error; err != nil {
+	if err := database.DB.Preload("Group").First(&schedule, scheduleID).Error; err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Schedule not found"})
 	}
 
-	// ตรวจสอบว่าเป็นคนที่ถูก assign
-	if schedule.AssignedToUserID != currentUserID {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "You are not assigned to this schedule"})
+	// ตรวจสอบสิทธิ์ในการยืนยัน schedule
+	canConfirm := false
+	
+	// Admin/Owner สามารถยืนยันให้ใครก็ได้
+	if userRole == "admin" || userRole == "owner" {
+		canConfirm = true
+	} else {
+		// สำหรับ class schedules - ตรวจสอบว่าเป็น default teacher
+		if schedule.ScheduleType == "class" && schedule.DefaultTeacherID != nil && *schedule.DefaultTeacherID == currentUserID {
+			canConfirm = true
+		} else if schedule.ScheduleType != "class" {
+			// สำหรับ event/appointment - ตรวจสอบว่าเป็น participant
+			var participant models.ScheduleParticipant
+			if err := database.DB.Where("schedule_id = ? AND user_id = ?", scheduleID, currentUserID).First(&participant).Error; err == nil {
+				canConfirm = true
+			}
+		}
+	}
+	
+	if !canConfirm {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "You are not authorized to confirm this schedule"})
 	}
 
 	// ตรวจสอบสถานะปัจจุบัน
@@ -252,323 +889,10 @@ func (sc *ScheduleController) ConfirmSchedule(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to confirm schedule"})
 	}
 
-	// สร้าง notification สำหรับ students ที่อยู่ใน course
-	go services.NotifyStudentsScheduleConfirmed(schedule.ID)
+	// ส่ง notification ให้ admin และ owner
+	go services.NotifyStudentsScheduleConfirmed(uint(scheduleID))
 
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message":  "Schedule confirmed successfully",
-		"schedule": schedule,
-	})
-}
-
-// GetMySchedules - ดู schedule ของตัวเอง (teacher และ student)
-func (sc *ScheduleController) GetMySchedules(c *fiber.Ctx) error {
-	userID := c.Locals("user_id")
-	currentUserID := userID.(uint)
-	userRole := c.Locals("role")
-
-	var schedules []models.Schedules
-
-	if userRole == "teacher" || userRole == "admin" || userRole == "owner" {
-		// ครูดู schedule ที่ตัวเองถูก assign
-		err := database.DB.Where("assigned_to_user_id = ?", currentUserID).
-			Preload("Course").
-			Preload("Room").
-			Find(&schedules).Error
-		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch schedules"})
-		}
-	} else {
-		// นักเรียนดู schedule ที่ตัวเองเข้าร่วม
-		err := database.DB.Table("schedules").
-			Joins("JOIN user_in_courses ON user_in_courses.course_id = schedules.course_id").
-			Where("user_in_courses.user_id = ? AND schedules.status = ?", currentUserID, "scheduled").
-			Preload("Course").
-			Preload("Room").
-			Find(&schedules).Error
-		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch schedules"})
-		}
-	}
-
-	// ปรับแต่งข้อมูลสำหรับ student (แสดงแค่ nickname, level, grade)
-	if userRole == "student" {
-		for i := range schedules {
-			schedules[i].Course = models.Course{
-				Name:  schedules[i].Course.Name,
-				Level: schedules[i].Course.Level,
-			}
-		}
-	}
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"schedules": schedules,
-	})
-}
-
-// CreateMakeupSession - สร้าง makeup session (เฉพาะ class type)
-func (sc *ScheduleController) CreateMakeupSession(c *fiber.Ctx) error {
-	userRole := c.Locals("role")
-	if userRole != "admin" && userRole != "owner" && userRole != "teacher" {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Only admin, owner, and teacher can create makeup sessions"})
-	}
-
-	var req CreateMakeupSessionRequest
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
-	}
-
-	// ดึง session เก่า
-	var originalSession models.Schedule_Sessions
-	if err := database.DB.First(&originalSession, req.OriginalSessionID).Error; err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Original session not found"})
-	}
-
-	// ดึง schedule เพื่อตรวจสอบ type
-	var schedule models.Schedules
-	if err := database.DB.First(&schedule, originalSession.ScheduleID).Error; err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Schedule not found"})
-	}
-
-	// ตรวจสอบว่าเป็น class type
-	if schedule.ScheduleType != "class" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Makeup sessions can only be created for class type schedules"})
-	}
-
-	// ตรวจสอบสิทธิ์ (teacher ต้องเป็นคนที่ถูก assign)
-	if userRole == "teacher" {
-		userID := c.Locals("user_id")
-		currentUserID := userID.(uint)
-		if schedule.AssignedToUserID != currentUserID {
-			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "You are not assigned to this schedule"})
-		}
-	}
-
-	tx := database.DB.Begin()
-
-	// อัพเดท session เก่า
-	if err := tx.Model(&originalSession).Updates(map[string]interface{}{
-		"status":            req.NewSessionStatus,
-		"cencelling_reason": req.CancellingReason,
-	}).Error; err != nil {
-		tx.Rollback()
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update original session"})
-	}
-
-	// แปลง time string เป็น time.Time
-	startTime, err := time.Parse("15:04", req.NewStartTime)
-	if err != nil {
-		tx.Rollback()
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid start time format"})
-	}
-
-	// สร้าง makeup session ใหม่
-	makeupSession := models.Schedule_Sessions{
-		ScheduleID:            originalSession.ScheduleID,
-		Session_date:          req.NewSessionDate,
-		Start_time:            time.Date(req.NewSessionDate.Year(), req.NewSessionDate.Month(), req.NewSessionDate.Day(), startTime.Hour(), startTime.Minute(), 0, 0, req.NewSessionDate.Location()),
-		End_time:              time.Date(req.NewSessionDate.Year(), req.NewSessionDate.Month(), req.NewSessionDate.Day(), startTime.Hour()+schedule.Hours_per_session, startTime.Minute(), 0, 0, req.NewSessionDate.Location()),
-		Session_number:        originalSession.Session_number,
-		Week_number:           originalSession.Week_number,
-		Status:                "scheduled",
-		Is_makeup:             true,
-		Makeup_for_session_id: func(v uint) *uint { return &v }(originalSession.ID),
-		Notes:                 fmt.Sprintf("Makeup session for cancelled session on %s", originalSession.Session_date.Format("2006-01-02")),
-	}
-
-	if err := tx.Create(&makeupSession).Error; err != nil {
-		tx.Rollback()
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create makeup session"})
-	}
-
-	tx.Commit()
-
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-		"message":        "Makeup session created successfully",
-		"makeup_session": makeupSession,
-	})
-}
-
-// GetScheduleSessions - ดู sessions ของ schedule
-func (sc *ScheduleController) GetScheduleSessions(c *fiber.Ctx) error {
-	scheduleID, err := strconv.ParseUint(c.Params("id"), 10, 32)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid schedule ID"})
-	}
-
-	var sessions []models.Schedule_Sessions
-	if err := database.DB.Where("schedule_id = ?", scheduleID).Order("session_date ASC").Find(&sessions).Error; err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch sessions"})
-	}
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"sessions": sessions,
-	})
-}
-
-// AddComment - เพิ่ม comment ใน schedule หรือ session
-func (sc *ScheduleController) AddComment(c *fiber.Ctx) error {
-	userID := c.Locals("user_id")
-	currentUserID := userID.(uint)
-
-	var req struct {
-		ScheduleID *uint  `json:"schedule_id"`
-		SessionID  *uint  `json:"session_id"`
-		Comment    string `json:"comment" validate:"required"`
-	}
-
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
-	}
-
-	if req.ScheduleID == nil && req.SessionID == nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Either schedule_id or session_id must be provided"})
-	}
-
-	comment := models.Schedules_or_Sessions_Comment{
-		UserID:  currentUserID,
-		Comment: req.Comment,
-	}
-
-	if req.ScheduleID != nil {
-		comment.ScheduleID = *req.ScheduleID
-	}
-	if req.SessionID != nil {
-		comment.SessionID = *req.SessionID
-	}
-
-	if err := database.DB.Create(&comment).Error; err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to add comment"})
-	}
-
-	// โหลดข้อมูลสมบูรณ์
-	database.DB.Preload("User").First(&comment, comment.ID)
-
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-		"message": "Comment added successfully",
-		"comment": comment,
-	})
-}
-
-// GetComments - ดู comments ของ schedule หรือ session
-func (sc *ScheduleController) GetComments(c *fiber.Ctx) error {
-	scheduleID := c.Query("schedule_id")
-	sessionID := c.Query("session_id")
-
-	if scheduleID == "" && sessionID == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Either schedule_id or session_id query parameter must be provided"})
-	}
-
-	var comments []models.Schedules_or_Sessions_Comment
-	query := database.DB.Preload("User")
-
-	if scheduleID != "" {
-		query = query.Where("schedule_id = ?", scheduleID)
-	}
-	if sessionID != "" {
-		query = query.Where("session_id = ?", sessionID)
-	}
-
-	if err := query.Order("created_at ASC").Find(&comments).Error; err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch comments"})
-	}
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"comments": comments,
-	})
-}
-
-// GetSchedules - ดู schedules ทั้งหมด (สำหรับ admin และ owner)
-func (sc *ScheduleController) GetSchedules(c *fiber.Ctx) error {
-	userRole := c.Locals("role")
-	if userRole != "admin" && userRole != "owner" {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Only admin and owner can view all schedules"})
-	}
-
-	var schedules []models.Schedules
-	query := database.DB.Preload("Course").Preload("AssignedTo").Preload("Room")
-
-	// Filter parameters
-	status := c.Query("status")
-	scheduleType := c.Query("type")
-	branchID := c.Query("branch_id")
-
-	if status != "" {
-		query = query.Where("status = ?", status)
-	}
-	if scheduleType != "" {
-		query = query.Where("schedule_type = ?", scheduleType)
-	}
-	if branchID != "" {
-		query = query.Joins("JOIN rooms ON rooms.id = schedules.room_id").
-			Where("rooms.branch_id = ?", branchID)
-	}
-
-	if err := query.Find(&schedules).Error; err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch schedules"})
-	}
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"schedules": schedules,
-	})
-}
-
-// UpdateSessionStatus - อัพเดทสถานะของ session (สำหรับครู)
-func (sc *ScheduleController) UpdateSessionStatus(c *fiber.Ctx) error {
-	userRole := c.Locals("role")
-	userID := c.Locals("user_id")
-	currentUserID := userID.(uint)
-
-	sessionID, err := strconv.ParseUint(c.Params("id"), 10, 32)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid session ID"})
-	}
-
-	var req struct {
-		Status string `json:"status" validate:"required,oneof=confirmed completed cancelled no-show"`
-		Notes  string `json:"notes"`
-	}
-
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
-	}
-
-	// ดึง session
-	var session models.Schedule_Sessions
-	if err := database.DB.First(&session, sessionID).Error; err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Session not found"})
-	}
-
-	// ดึง schedule เพื่อตรวจสอบสิทธิ์
-	var schedule models.Schedules
-	if err := database.DB.First(&schedule, session.ScheduleID).Error; err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Schedule not found"})
-	}
-
-	// ตรวจสอบสิทธิ์
-	if userRole == "teacher" && schedule.AssignedToUserID != currentUserID {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "You are not assigned to this schedule"})
-	}
-
-	// อัพเดท session
-	updates := map[string]interface{}{
-		"status": req.Status,
-	}
-	if req.Notes != "" {
-		updates["notes"] = req.Notes
-	}
-
-	if err := database.DB.Model(&session).Updates(updates).Error; err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update session status"})
-	}
-
-	// ถ้าเป็นการ confirm session ให้ส่ง notification ให้นักเรียน
-	if req.Status == "confirmed" {
-		go services.NotifyUpcomingClass(session.ID, 30) // แจ้งเตือนก่อน 30 นาที
-	}
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Session status updated successfully",
-		"session": session,
+	return c.JSON(fiber.Map{
+		"message": "Schedule confirmed successfully",
 	})
 }

@@ -84,11 +84,14 @@ migrate:
 	@go run main.go migrate
 	@echo "✅ Migrations completed!"
 
-# Seed database
+# Seed database (DEPRECATED)
+# NOTE: Seeding is intentionally only available via the start-seed.ps1 script
+# to avoid accidental data loss. The Makefile target is kept for discoverability
+# but will not run seeding automatically.
 seed:
-	@echo "🌱 Seeding database..."
-	@go run main.go seed
-	@echo "✅ Database seeded!"
+	@echo "⚠️  The Makefile 'seed' target is deprecated. Use start-seed.ps1 to run seeds."
+	@echo "    PowerShell: ./start-seed.ps1"
+	@echo "    Alternatively, run the start-seed.ps1 script manually to execute seeding."
 
 # Setup development environment
 setup-dev: deps build

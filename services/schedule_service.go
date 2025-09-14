@@ -270,29 +270,51 @@ func RescheduleSessions(sessions []models.Schedule_Sessions, holidays []time.Tim
 // NotifyStudentsScheduleConfirmed ส่ง notification ให้นักเรียนเมื่อ schedule ถูกยืนยัน
 func NotifyStudentsScheduleConfirmed(scheduleID uint) {
 	var schedule models.Schedules
-	if err := database.DB.Preload("Course").First(&schedule, scheduleID).Error; err != nil {
+	if err := database.DB.Preload("Group.Course").First(&schedule, scheduleID).Error; err != nil {
 		return
 	}
 
-	// ดึงรายชื่อนักเรียนใน course
-	var userInCourses []models.User_inCourse
-	if err := database.DB.Where("course_id = ? AND role = ?", schedule.CourseID, "student").
-		Preload("User").Find(&userInCourses).Error; err != nil {
-		return
-	}
-
-	// สร้าง notification สำหรับนักเรียนแต่ละคน
-	for _, userInCourse := range userInCourses {
-		notification := models.Notification{
-			UserID:    userInCourse.UserID,
-			Title:     "Schedule Confirmed",
-			TitleTh:   "ตารางเรียนได้รับการยืนยันแล้ว",
-			Message:   fmt.Sprintf("Your class schedule '%s' has been confirmed by the teacher.", schedule.ScheduleName),
-			MessageTh: fmt.Sprintf("ตารางเรียน '%s' ของคุณได้รับการยืนยันจากครูแล้ว", schedule.ScheduleName),
-			Type:      "success",
+	// ดึงรายชื่อนักเรียนจาก group members (สำหรับ class schedules)
+	if schedule.GroupID != nil {
+		var groupMembers []models.GroupMember
+		if err := database.DB.Preload("Student.User").Where("group_id = ?", *schedule.GroupID).Find(&groupMembers).Error; err != nil {
+			return
 		}
 
-		database.DB.Create(&notification)
+		// สร้าง notification สำหรับนักเรียนแต่ละคน
+		for _, member := range groupMembers {
+			if member.Student.UserID != nil {
+				notification := models.Notification{
+					UserID:    *member.Student.UserID,
+					Title:     "Schedule Confirmed",
+					TitleTh:   "ตารางเรียนได้รับการยืนยันแล้ว",
+					Message:   fmt.Sprintf("Your class schedule '%s' has been confirmed by the teacher.", schedule.ScheduleName),
+					MessageTh: fmt.Sprintf("ตารางเรียน '%s' ของคุณได้รับการยืนยันจากครูแล้ว", schedule.ScheduleName),
+					Type:      "success",
+				}
+
+				database.DB.Create(&notification)
+			}
+		}
+	} else {
+		// สำหรับ event/appointment schedules - ส่งให้ participants
+		var participants []models.ScheduleParticipant
+		if err := database.DB.Where("schedule_id = ?", scheduleID).Find(&participants).Error; err != nil {
+			return
+		}
+
+		for _, participant := range participants {
+			notification := models.Notification{
+				UserID:    participant.UserID,
+				Title:     "Schedule Confirmed",
+				TitleTh:   "ตารางนัดหมายได้รับการยืนยันแล้ว",
+				Message:   fmt.Sprintf("Your scheduled '%s' has been confirmed.", schedule.ScheduleName),
+				MessageTh: fmt.Sprintf("การนัดหมาย '%s' ของคุณได้รับการยืนยันแล้ว", schedule.ScheduleName),
+				Type:      "success",
+			}
+
+			database.DB.Create(&notification)
+		}
 	}
 }
 
@@ -304,7 +326,7 @@ func NotifyUpcomingClass(sessionID uint, minutesBefore int) {
 	}
 
 	var schedule models.Schedules
-	if err := database.DB.Preload("Course").First(&schedule, session.ScheduleID).Error; err != nil {
+	if err := database.DB.Preload("Group.Course").First(&schedule, session.ScheduleID).Error; err != nil {
 		return
 	}
 
@@ -315,27 +337,52 @@ func NotifyUpcomingClass(sessionID uint, minutesBefore int) {
 
 	// ดึงรายชื่อผู้เข้าร่วม (ครูและนักเรียน)
 	var users []models.User
-	err := database.DB.Table("users").
-		Joins("JOIN user_in_courses ON user_in_courses.user_id = users.id").
-		Where("user_in_courses.course_id = ?", schedule.CourseID).
-		Find(&users).Error
-	if err != nil {
-		return
+	
+	// For class schedules - get users from group members
+	if schedule.GroupID != nil {
+		var groupMembers []models.GroupMember
+		err := database.DB.Preload("Student.User").Where("group_id = ?", *schedule.GroupID).Find(&groupMembers).Error
+		if err == nil {
+			for _, member := range groupMembers {
+				if member.Student.UserID != nil {
+					var user models.User
+					if err := database.DB.First(&user, *member.Student.UserID).Error; err == nil {
+						users = append(users, user)
+					}
+				}
+			}
+		}
+	} else {
+		// For event/appointment schedules - get participants
+		var participants []models.ScheduleParticipant
+		err := database.DB.Preload("User").Where("schedule_id = ?", schedule.ID).Find(&participants).Error
+		if err == nil {
+			for _, participant := range participants {
+				users = append(users, participant.User)
+			}
+		}
 	}
 
-	// เพิ่มครูที่ถูก assign
-	var assignedTeacher models.User
-	if err := database.DB.First(&assignedTeacher, schedule.AssignedToUserID).Error; err == nil {
-		// สร้าง notification สำหรับครู
-		notification := models.Notification{
-			UserID:    assignedTeacher.ID,
-			Title:     "Upcoming Class",
-			TitleTh:   "เรียนจะเริ่มเร็วๆ นี้",
-			Message:   fmt.Sprintf("Your class '%s' will start in %d minutes at %s", schedule.ScheduleName, minutesBefore, session.Start_time.Format("15:04")),
-			MessageTh: fmt.Sprintf("คลาส '%s' ของคุณจะเริ่มในอีก %d นาที เวลา %s", schedule.ScheduleName, minutesBefore, session.Start_time.Format("15:04")),
-			Type:      "info",
+	// เพิ่มครูที่ถูก assign (ใช้ default teacher หรือ teacher specific สำหรับ session)
+	teacherID := session.AssignedTeacherID
+	if teacherID == nil {
+		teacherID = schedule.DefaultTeacherID
+	}
+	
+	if teacherID != nil {
+		var assignedTeacher models.User
+		if err := database.DB.First(&assignedTeacher, *teacherID).Error; err == nil {
+			// สร้าง notification สำหรับครู
+			notification := models.Notification{
+				UserID:    assignedTeacher.ID,
+				Title:     "Upcoming Class",
+				TitleTh:   "เรียนจะเริ่มเร็วๆ นี้",
+				Message:   fmt.Sprintf("Your class '%s' will start in %d minutes at %s", schedule.ScheduleName, minutesBefore, session.Start_time.Format("15:04")),
+				MessageTh: fmt.Sprintf("คลาส '%s' ของคุณจะเริ่มในอีก %d นาที เวลา %s", schedule.ScheduleName, minutesBefore, session.Start_time.Format("15:04")),
+				Type:      "info",
+			}
+			database.DB.Create(&notification)
 		}
-		database.DB.Create(&notification)
 	}
 
 	// สร้าง notification สำหรับนักเรียน

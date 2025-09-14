@@ -1,11 +1,16 @@
 package controllers
 
 import (
+	"englishkorat_go/config"
 	"englishkorat_go/database"
 	"englishkorat_go/middleware"
 	"englishkorat_go/models"
+	notifsvc "englishkorat_go/services/notifications"
+	"log"
 	"strconv"
 	"time"
+
+	"englishkorat_go/utils"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -28,33 +33,60 @@ func (nc *NotificationController) GetNotifications(c *fiber.Ctx) error {
 	var notifications []models.Notification
 	var total int64
 
-	query := database.DB.Where("user_id = ?", user.ID)
+	// Ensure GORM has the model/table set so Count/Find work (avoid "Table not set" errors)
+	query := database.DB.Model(&models.Notification{}).Where("user_id = ?", user.ID)
 
-	// Filter by read status if specified
+	// Filter by read status if specified (quote reserved column `read`)
 	if read := c.Query("read"); read == "true" {
-		query = query.Where("read = ?", true)
+		query = query.Where("`read` = ?", true)
 	} else if read == "false" {
-		query = query.Where("read = ?", false)
+		query = query.Where("`read` = ?", false)
 	}
 
 	// Filter by type if specified
 	if notificationType := c.Query("type"); notificationType != "" {
-		query = query.Where("type = ?", notificationType)
+		// quote column name `type` to avoid conflicts with reserved words in some MySQL modes
+		query = query.Where("`type` = ?", notificationType)
 	}
 
-	// Get total count
-	query.Count(&total)
-
-	// Get notifications with pagination
-	if err := query.Order("created_at DESC").
-		Offset(offset).Limit(limit).Find(&notifications).Error; err != nil {
+	// Get total count (handle potential SQL errors upfront)
+	if err := query.Count(&total).Error; err != nil {
+		// Log the underlying DB error for debugging
+		log.Printf("notifications: count error: %v", err)
+		if config.AppConfig.AppEnv == "development" {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error":   "Failed to fetch notifications",
+				"details": err.Error(),
+			})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to fetch notifications",
 		})
 	}
 
+	// Preload related user/student/branch to build compact DTOs
+	if err := query.Preload("User").Preload("User.Student").Preload("User.Teacher").Preload("User.Branch").
+		Order("created_at DESC").Offset(offset).Limit(limit).Find(&notifications).Error; err != nil {
+		log.Printf("notifications: find error: %v", err)
+		if config.AppConfig.AppEnv == "development" {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error":   "Failed to fetch notifications",
+				"details": err.Error(),
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to fetch notifications",
+		})
+	}
+
+	// Map to DTOs
+	var dtos []utils.NotificationDTO
+	for _, n := range notifications {
+		dtos = append(dtos, utils.ToNotificationDTO(n))
+	}
+
 	return c.JSON(fiber.Map{
-		"notifications": notifications,
+		"notifications": dtos,
 		"pagination": fiber.Map{
 			"page":  page,
 			"limit": limit,
@@ -96,9 +128,9 @@ func (nc *NotificationController) GetNotification(c *fiber.Ctx) error {
 func (nc *NotificationController) CreateNotification(c *fiber.Ctx) error {
 	var req struct {
 		UserID    uint   `json:"user_id"`
-		UserIDs   []uint `json:"user_ids"`    // For multiple users
-		Role      string `json:"role"`        // For all users with specific role
-		BranchID  uint   `json:"branch_id"`   // For all users in branch
+		UserIDs   []uint `json:"user_ids"`  // For multiple users
+		Role      string `json:"role"`      // For all users with specific role
+		BranchID  uint   `json:"branch_id"` // For all users in branch
 		Title     string `json:"title" validate:"required"`
 		TitleTh   string `json:"title_th"`
 		Message   string `json:"message" validate:"required"`
@@ -144,7 +176,7 @@ func (nc *NotificationController) CreateNotification(c *fiber.Ctx) error {
 			query = query.Where("branch_id = ?", req.BranchID)
 		}
 		query.Find(&users)
-		
+
 		for _, user := range users {
 			userIDs = append(userIDs, user.ID)
 		}
@@ -152,7 +184,7 @@ func (nc *NotificationController) CreateNotification(c *fiber.Ctx) error {
 		// All users in specific branch
 		var users []models.User
 		database.DB.Where("branch_id = ? AND status = ?", req.BranchID, "active").Find(&users)
-		
+
 		for _, user := range users {
 			userIDs = append(userIDs, user.ID)
 		}
@@ -169,24 +201,10 @@ func (nc *NotificationController) CreateNotification(c *fiber.Ctx) error {
 	}
 
 	// Create notifications
-	var notifications []models.Notification
-	for _, userID := range userIDs {
-		notification := models.Notification{
-			UserID:    userID,
-			Title:     req.Title,
-			TitleTh:   req.TitleTh,
-			Message:   req.Message,
-			MessageTh: req.MessageTh,
-			Type:      req.Type,
-			Read:      false,
-		}
-		notifications = append(notifications, notification)
-	}
-
-	if err := database.DB.Create(&notifications).Error; err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to create notifications",
-		})
+	service := notifsvc.NewService()
+	q := notifsvc.QueuedForController(req.Title, req.TitleTh, req.Message, req.MessageTh, req.Type)
+	if err := service.EnqueueOrCreate(userIDs, q); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create notifications"})
 	}
 
 	// Log activity
@@ -197,9 +215,9 @@ func (nc *NotificationController) CreateNotification(c *fiber.Ctx) error {
 	})
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-		"message":       "Notifications created successfully",
-		"notifications": len(notifications),
-		"target_users":  len(userIDs),
+		"message":      "Notifications accepted",
+		"queued":       true,
+		"target_users": len(userIDs),
 	})
 }
 
@@ -253,7 +271,7 @@ func (nc *NotificationController) MarkAllAsRead(c *fiber.Ctx) error {
 
 	now := time.Now()
 	if err := database.DB.Model(&models.Notification{}).
-		Where("user_id = ? AND read = ?", user.ID, false).
+		Where("user_id = ? AND `read` = ?", user.ID, false).
 		Updates(map[string]interface{}{
 			"read":    true,
 			"read_at": &now,
@@ -314,7 +332,7 @@ func (nc *NotificationController) GetUnreadCount(c *fiber.Ctx) error {
 
 	var count int64
 	database.DB.Model(&models.Notification{}).
-		Where("user_id = ? AND read = ?", user.ID, false).
+		Where("user_id = ? AND `read` = ?", user.ID, false).
 		Count(&count)
 
 	return c.JSON(fiber.Map{
@@ -325,27 +343,27 @@ func (nc *NotificationController) GetUnreadCount(c *fiber.Ctx) error {
 // GetNotificationStats returns notification statistics (admin only)
 func (nc *NotificationController) GetNotificationStats(c *fiber.Ctx) error {
 	var stats struct {
-		Total   int64 `json:"total"`
-		Read    int64 `json:"read"`
-		Unread  int64 `json:"unread"`
-		ByType  map[string]int64 `json:"by_type"`
+		Total  int64            `json:"total"`
+		Read   int64            `json:"read"`
+		Unread int64            `json:"unread"`
+		ByType map[string]int64 `json:"by_type"`
 	}
 
 	// Total notifications
 	database.DB.Model(&models.Notification{}).Count(&stats.Total)
 
 	// Read notifications
-	database.DB.Model(&models.Notification{}).Where("read = ?", true).Count(&stats.Read)
+	database.DB.Model(&models.Notification{}).Where("`read` = ?", true).Count(&stats.Read)
 
 	// Unread notifications
-	database.DB.Model(&models.Notification{}).Where("read = ?", false).Count(&stats.Unread)
+	database.DB.Model(&models.Notification{}).Where("`read` = ?", false).Count(&stats.Unread)
 
 	// By type
 	stats.ByType = make(map[string]int64)
 	types := []string{"info", "warning", "error", "success"}
 	for _, notType := range types {
 		var count int64
-		database.DB.Model(&models.Notification{}).Where("type = ?", notType).Count(&count)
+		database.DB.Model(&models.Notification{}).Where("`type` = ?", notType).Count(&count)
 		stats.ByType[notType] = count
 	}
 

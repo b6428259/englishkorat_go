@@ -11,6 +11,49 @@ import (
 
 type TeacherController struct{}
 
+// teacherToResponse maps models.Teacher to a compact JSON-friendly shape
+func teacherToResponse(t models.Teacher) fiber.Map {
+	// compact user
+	user := fiber.Map{
+		"id":       t.User.ID,
+		"username": t.User.Username,
+		"phone":    t.User.Phone,
+		"avatar":   t.User.Avatar,
+	}
+
+	// compact branch (may be empty)
+	var branch fiber.Map
+	if t.Branch.ID != 0 {
+		branch = fiber.Map{
+			"id":      t.Branch.ID,
+			"name_en": t.Branch.NameEn,
+			"name_th": t.Branch.NameTh,
+			"code":    t.Branch.Code,
+		}
+	} else {
+		branch = fiber.Map{}
+	}
+
+	name := fiber.Map{
+		"first_en":    t.FirstNameEn,
+		"last_en":     t.LastNameEn,
+		"first_th":    t.FirstNameTh,
+		"last_th":     t.LastNameTh,
+		"nickname_th": t.NicknameTh,
+		"nickname_en": t.NicknameEn,
+	}
+
+	return fiber.Map{
+		"id":           t.ID,
+		"user_id":      t.UserID,
+		"name":         name,
+		"teacher_type": t.TeacherType,
+		"active":       t.Active,
+		"user":         user,
+		"branch":       branch,
+	}
+}
+
 // GetTeachers returns all teachers with pagination
 func (tc *TeacherController) GetTeachers(c *fiber.Ctx) error {
 	page, _ := strconv.Atoi(c.Query("page", "1"))
@@ -50,8 +93,21 @@ func (tc *TeacherController) GetTeachers(c *fiber.Ctx) error {
 		})
 	}
 
+	// If teacher.BranchID is zero (legacy data), fall back to user's branch
+	for i := range teachers {
+		if teachers[i].BranchID == 0 && teachers[i].User.ID != 0 && teachers[i].User.Branch.ID != 0 {
+			teachers[i].Branch = teachers[i].User.Branch
+		}
+	}
+
+	// Map to compact response shape
+	resp := make([]fiber.Map, 0, len(teachers))
+	for _, t := range teachers {
+		resp = append(resp, teacherToResponse(t))
+	}
+
 	return c.JSON(fiber.Map{
-		"teachers": teachers,
+		"teachers": resp,
 		"pagination": fiber.Map{
 			"page":  page,
 			"limit": limit,
@@ -77,8 +133,57 @@ func (tc *TeacherController) GetTeacher(c *fiber.Ctx) error {
 		})
 	}
 
+	// Fallback to user's branch when teacher.BranchID is zero
+	if teacher.BranchID == 0 && teacher.User.ID != 0 && teacher.User.Branch.ID != 0 {
+		teacher.Branch = teacher.User.Branch
+	}
+
+	// compact user
+	user := fiber.Map{
+		"id":       teacher.User.ID,
+		"username": teacher.User.Username,
+		"phone":    teacher.User.Phone,
+		"avatar":   teacher.User.Avatar,
+	}
+
+	// compact branch
+	var branch fiber.Map
+	if teacher.Branch.ID != 0 {
+		branch = fiber.Map{
+			"id":      teacher.Branch.ID,
+			"name_en": teacher.Branch.NameEn,
+			"name_th": teacher.Branch.NameTh,
+			"code":    teacher.Branch.Code,
+		}
+	} else {
+		branch = fiber.Map{}
+	}
+
+	// full teacher fields
+	teacherData := fiber.Map{
+		"id":              teacher.ID,
+		"created_at":      teacher.CreatedAt,
+		"updated_at":      teacher.UpdatedAt,
+		"deleted_at":      teacher.DeletedAt,
+		"user_id":         teacher.UserID,
+		"first_name_en":   teacher.FirstNameEn,
+		"first_name_th":   teacher.FirstNameTh,
+		"last_name_en":    teacher.LastNameEn,
+		"last_name_th":    teacher.LastNameTh,
+		"nickname_en":     teacher.NicknameEn,
+		"nickname_th":     teacher.NicknameTh,
+		"nationality":     teacher.Nationality,
+		"teacher_type":    teacher.TeacherType,
+		"hourly_rate":     teacher.HourlyRate,
+		"specializations": teacher.Specializations,
+		"certifications":  teacher.Certifications,
+		"active":          teacher.Active,
+		"user":            user,
+		"branch":          branch,
+	}
+
 	return c.JSON(fiber.Map{
-		"teacher": teacher,
+		"teacher": teacherData,
 	})
 }
 

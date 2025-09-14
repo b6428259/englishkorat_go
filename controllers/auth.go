@@ -1,18 +1,55 @@
 package controllers
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"englishkorat_go/database"
 	"englishkorat_go/middleware"
 	"englishkorat_go/models"
 	"englishkorat_go/utils"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
 
 type AuthController struct{}
+
+// Logout invalidates the current JWT by storing it in Redis blacklist for 24 hours
+func (ac *AuthController) Logout(c *fiber.Ctx) error {
+	// Extract token from Authorization header
+	authHeader := c.Get("Authorization")
+	if authHeader == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Missing authorization header"})
+	}
+
+	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+	if tokenString == authHeader {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid authorization header format"})
+	}
+
+	// Store token in Redis blacklist with 24 hour TTL if Redis is available
+	rc := database.GetRedisClient()
+	if rc != nil {
+		ctx := context.Background()
+		key := "blacklist:jwt:" + tokenString
+		// Set with TTL 24 hours
+		if err := rc.Set(ctx, key, "1", 24*time.Hour).Err(); err != nil {
+			// If Redis fails, log activity but return success (don't block logout)
+			middleware.LogActivity(c, "LOGOUT", "auth", 0, fiber.Map{"error": err.Error()})
+		}
+	}
+
+	// Try to log who logged out (if possible)
+	if user, err := middleware.GetCurrentUser(c); err == nil {
+		middleware.LogActivity(c, "LOGOUT", "auth", user.ID, fiber.Map{"username": user.Username})
+	} else {
+		middleware.LogActivity(c, "LOGOUT", "auth", 0, fiber.Map{"note": "anonymous or token invalid"})
+	}
+
+	return c.JSON(fiber.Map{"message": "Logged out successfully"})
+}
 
 // LoginRequest represents the login request body
 type LoginRequest struct {

@@ -1,6 +1,7 @@
 package services
 
 import (
+	notifsvc "englishkorat_go/services/notifications"
 	"fmt"
 	"time"
 )
@@ -14,6 +15,13 @@ type ScheduleManager struct {
 func NewScheduleManager() *ScheduleManager {
 	return &ScheduleManager{
 		notificationScheduler: NewNotificationScheduler(),
+	}
+}
+
+// SetWebSocketHub injects the WebSocket hub into the underlying notification service
+func (sm *ScheduleManager) SetWebSocketHub(h notifsvc.WSHub) {
+	if sm.notificationScheduler != nil && sm.notificationScheduler.ns != nil {
+		sm.notificationScheduler.ns.SetWebSocketHub(h)
 	}
 }
 
@@ -54,11 +62,8 @@ func (sm *ScheduleManager) startDailyReminderScheduler() {
 	ticker := time.NewTicker(24 * time.Hour)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			sm.notificationScheduler.SendDailyScheduleReminder()
-		}
+	for range ticker.C {
+		sm.notificationScheduler.SendDailyScheduleReminder()
 	}
 }
 
@@ -67,11 +72,8 @@ func (sm *ScheduleManager) startMissedSessionChecker() {
 	ticker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			sm.notificationScheduler.CheckMissedSessions()
-		}
+	for range ticker.C {
+		sm.notificationScheduler.CheckMissedSessions()
 	}
 }
 

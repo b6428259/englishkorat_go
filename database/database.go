@@ -100,11 +100,16 @@ func AutoMigrate() {
 		&models.ActivityLog{},
 		&models.Notification{},
 		&models.LogArchive{},
-		&models.Student_Group{},
+		&models.Student_Group{}, // Legacy model for backward compatibility
+		&models.Group{},         // New Group model
+		&models.GroupMember{},   // New GroupMember model
 		&models.User_inCourse{},
 		&models.Schedules{},
 		&models.Schedule_Sessions{},
 		&models.Schedules_or_Sessions_Comment{},
+		&models.ScheduleParticipant{},
+		&models.SessionConfirmation{},
+		&models.NotificationPreference{},
 		&models.LineGroup{},
 	)
 

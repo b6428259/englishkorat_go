@@ -39,6 +39,33 @@ Use the PowerShell script to establish tunnel connection:
 .\start-dev.ps1
 ```
 
+### Seeding the Database
+
+Seeding is intentionally disabled during normal application startup to avoid
+accidental data loss. To populate the database with seed data, run the
+PowerShell seeder script which is the supported and documented method:
+
+```powershell
+./start-seed.ps1
+```
+
+Do NOT run seeding automatically in production or via `go run main.go`.
+The Makefile `seed` target has been deprecated and now only points to the
+PowerShell script.
+
+### Skipping automatic migrations during development
+
+To speed up local startup and avoid schema checks or ALTER statements during
+development, you can set the `SKIP_MIGRATE` environment variable to `true`.
+The `start-dev.ps1` script sets this variable for the spawned process so
+automatic migrations are skipped when you run the app via the tunnel script.
+
+Example (PowerShell):
+```powershell
+$env:SKIP_MIGRATE = "true"
+go run main.go
+```
+
 ### Project Structure
 
 ```

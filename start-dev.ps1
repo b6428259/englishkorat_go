@@ -159,9 +159,14 @@ if ($dbSuccess -and $redisSuccess) {
     Write-Host "`nAll services are connected! You can now run your Go application." -ForegroundColor Green
     Write-Host "Starting: go run main.go (press Ctrl+C to stop)" -ForegroundColor Yellow
     
-    try {
-        go run main.go
-    }
+        try {
+            # To speed up local development, skip automatic migrations/schema checks.
+            # The application honors the SKIP_MIGRATE environment variable (set to "true").
+            Write-Host "Setting SKIP_MIGRATE=true for this session to skip automatic migrations at startup." -ForegroundColor Yellow
+            $env:SKIP_MIGRATE = "true"
+
+            go run main.go
+        }
     finally {
         Write-Host "`nStopping SSH tunnel..." -ForegroundColor Yellow
         if ($sshProc -and -not $sshProc.HasExited) {
