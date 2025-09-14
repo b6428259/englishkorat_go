@@ -71,28 +71,29 @@ func (ns *NotificationScheduler) CheckUpcomingSessions() {
 		}
 
 		for _, session := range sessions {
-			// กันยิงซ้ำภายในช่วงเวลา
-			if !ns.hasNotificationBeenSent(session.ID, nt.minutes) {
-				ns.sendUpcomingClassNotification(session, nt.minutes, nt.label)
-			}
+			// ให้ฟังก์ชันส่งแจ้งเตือนเป็นผู้รับผิดชอบการกันซ้ำ (หลังดึง schedule แล้ว)
+			ns.sendUpcomingClassNotification(session, nt.minutes, nt.label)
 		}
 	}
 }
 
 // hasNotificationBeenSent ตรวจสอบว่าได้ส่ง notification แล้วหรือยัง
 // ใช้ข้อความภาษาอังกฤษเป็น anchor แบบ incoming เพื่อความสม่ำเสมอ
-func (ns *NotificationScheduler) hasNotificationBeenSent(sessionID uint, minutes int) bool {
+func (ns *NotificationScheduler) hasNotificationBeenSent(scheduleName, timeLabel, startAt string) bool {
+	// ใช้ anchor 3 ส่วน: ชื่อคลาส, ช่วงเวลา (เช่น 5 minutes/1 hour), และเวลาเริ่ม HH:MM
+	// จำกัดช่วงเวลา 3 ชั่วโมงเพื่อกันซ้ำรอบๆ cron windows
 	var count int64
-	err := ns.db.Model(&models.Notification{}).
-		Where("message LIKE ? AND created_at > ?",
-			fmt.Sprintf("%%will start in %d minutes%%", minutes),
-			time.Now().Add(-2*time.Hour)).
-		Count(&count).Error
-
-	if err != nil {
+	cutoff := time.Now().Add(-3 * time.Hour)
+	// ตัวอย่างข้อความ: Your class 'ABC' will start in 1 hour at 14:30
+	if err := ns.db.Model(&models.Notification{}).
+		Where("message LIKE ?", fmt.Sprintf("%%class '%s'%%", scheduleName)).
+		Where("message LIKE ?", fmt.Sprintf("%%will start in %s%%", timeLabel)).
+		Where("message LIKE ?", fmt.Sprintf("%%at %s%%", startAt)).
+		Where("created_at > ?", cutoff).
+		Count(&count).Error; err != nil {
+		// หาก query มีปัญหา ให้ถือว่ายังไม่ส่ง (เพื่อไม่บล็อกการแจ้งเตือนโดยไม่ตั้งใจ)
 		return false
 	}
-
 	return count > 0
 }
 
@@ -104,6 +105,12 @@ func (ns *NotificationScheduler) sendUpcomingClassNotification(session models.Sc
 	var schedule models.Schedules
 	if err := ns.db.Preload("Group.Course").First(&schedule, session.ScheduleID).Error; err != nil {
 		fmt.Printf("Error fetching schedule for session %d: %v\n", session.ID, err)
+		return
+	}
+
+	// กันยิงซ้ำ: ตรวจจากข้อความภาษาอังกฤษที่เราจะส่งจริง ๆ
+	startHHMM := session.Start_time.Format("15:04")
+	if ns.hasNotificationBeenSent(schedule.ScheduleName, timeLabel, startHHMM) {
 		return
 	}
 
@@ -149,19 +156,18 @@ func (ns *NotificationScheduler) sendUpcomingClassNotification(session models.Sc
 		}
 	}
 
-	// รองรับสคีมาเก่าใน current ที่อาจเซฟครูไว้ที่ schedule.AssignedToUserID
-	if schedule.AssignedToUserID != 0 {
-		var legacyTeacher models.User
-		if err := ns.db.First(&legacyTeacher, schedule.AssignedToUserID).Error; err == nil {
-			users = append(users, legacyTeacher)
-		}
-	}
+	// หมายเหตุ: ตัดการรองรับฟิลด์ legacy schedule.AssignedToUserID เนื่องจากไม่มีในโมเดลปัจจุบัน
 
 	// ส่ง notification ผ่าน service (รองรับ queue และ websocket broadcast)
 	if len(users) > 0 {
+		// dedupe ผู้รับเพื่อกันยิงซ้ำต่อคน
+		unique := make(map[uint]struct{}, len(users))
 		userIDs := make([]uint, 0, len(users))
 		for _, u := range users {
-			userIDs = append(userIDs, u.ID)
+			if _, ok := unique[u.ID]; !ok {
+				unique[u.ID] = struct{}{}
+				userIDs = append(userIDs, u.ID)
+			}
 		}
 
 		title := "Upcoming Class"
@@ -204,7 +210,8 @@ func (ns *NotificationScheduler) SendDailyScheduleReminder() {
 	err := ns.db.Where("session_date BETWEEN ? AND ? AND status = ?",
 		today.Format("2006-01-02"), tomorrow.Format("2006-01-02"), "confirmed").
 		Preload("Schedule").
-		Preload("Schedule.Course").
+		Preload("Schedule.Group").
+		Preload("Schedule.Group.Course").
 		Find(&sessions).Error
 	if err != nil {
 		fmt.Printf("Error fetching daily sessions: %v\n", err)
@@ -252,13 +259,7 @@ func (ns *NotificationScheduler) SendDailyScheduleReminder() {
 			}
 		}
 
-		// เผื่อสคีมาเก่า
-		if session.Schedule.AssignedToUserID != 0 {
-			var legacyTeacher models.User
-			if err := ns.db.First(&legacyTeacher, session.Schedule.AssignedToUserID).Error; err == nil {
-				users = append(users, legacyTeacher)
-			}
-		}
+		// หมายเหตุ: ตัดการรองรับฟิลด์ legacy schedule.AssignedToUserID เนื่องจากไม่มีในโมเดลปัจจุบัน
 
 		for _, u := range users {
 			userSessions[u.ID] = append(userSessions[u.ID], session)
