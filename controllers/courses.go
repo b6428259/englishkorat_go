@@ -14,24 +14,24 @@ type CourseController struct{}
 // GetCourses returns all courses (PUBLIC endpoint)
 func (cc *CourseController) GetCourses(c *fiber.Ctx) error {
 	var courses []models.Course
-	
+
 	// Build query
 	query := database.DB.Model(&models.Course{})
-	
+
 	// Filter by branch if specified
 	if branchID := c.Query("branch_id"); branchID != "" {
 		query = query.Where("branch_id = ?", branchID)
 	}
-	
+
 	// Filter by status (default to active)
 	status := c.Query("status", "active")
 	query = query.Where("status = ?", status)
-	
+
 	// Filter by course type if specified
 	if courseType := c.Query("course_type"); courseType != "" {
 		query = query.Where("course_type = ?", courseType)
 	}
-	
+
 	// Filter by level if specified
 	if level := c.Query("level"); level != "" {
 		query = query.Where("level = ?", level)

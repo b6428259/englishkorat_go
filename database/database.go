@@ -68,7 +68,7 @@ func connectDatabase() {
 	sqlDB.SetConnMaxLifetime(55 * time.Minute)
 
 	// Auto migrate (can be skipped with SKIP_MIGRATE=true)
-	if skip := os.Getenv("SKIP_MIGRATE"); skip == "true" {
+	if skip := os.Getenv("SKIP_MIGRATE"); skip == "false" {
 		log.Println("SKIP_MIGRATE=true; skipping automatic migrations")
 	} else {
 		AutoMigrate()
@@ -89,7 +89,7 @@ func AutoMigrate() {
 		}
 	}()
 
-	err := DB.AutoMigrate(
+	modelsList := []interface{}{
 		&models.Branch{},
 		&models.User{},
 		&models.Student{},
@@ -110,13 +110,64 @@ func AutoMigrate() {
 		&models.ScheduleParticipant{},
 		&models.SessionConfirmation{},
 		&models.NotificationPreference{},
-	)
+	}
+
+	err := DB.AutoMigrate(modelsList...)
 
 	if err != nil {
 		log.Fatal("Auto migration failed:", err)
 	}
 
 	log.Println("Database migration completed successfully")
+
+	// Optional: prune extra columns not defined in models (dangerous - gated by env)
+	if os.Getenv("PRUNE_COLUMNS") == "true" {
+		log.Println("PRUNE_COLUMNS=true; starting schema prune for extra columns")
+		for _, m := range modelsList {
+			if err := pruneExtraColumns(DB, m); err != nil {
+				log.Printf("Schema prune warning for %T: %v", m, err)
+			}
+		}
+		log.Println("Schema prune completed")
+	}
+}
+
+// pruneExtraColumns drops columns that exist in the DB table but not in the model definition.
+// It uses gorm schema parser to get model fields, then compares with DB column list.
+// WARNING: This is destructive. Gate with PRUNE_COLUMNS=true in env and use with backups.
+func pruneExtraColumns(db *gorm.DB, model interface{}) error {
+	// Resolve model's table name and field names
+	stmt := &gorm.Statement{DB: db}
+	if err := stmt.Parse(model); err != nil {
+		return fmt.Errorf("parse model: %w", err)
+	}
+	tableName := stmt.Schema.Table
+
+	// Columns in model
+	modelCols := map[string]struct{}{}
+	for _, f := range stmt.Schema.DBNames {
+		modelCols[f] = struct{}{}
+	}
+
+	// Columns in database
+	cols, err := db.Migrator().ColumnTypes(model)
+	if err != nil {
+		return fmt.Errorf("list columns: %w", err)
+	}
+
+	// Find extras
+	for _, c := range cols {
+		name := c.Name()
+		if _, ok := modelCols[name]; !ok {
+			// Skip GORM's soft delete column if model embeds gorm.DeletedAt (DB name may vary)
+			// We already included DeletedAt via BaseModel. If not present in DBNames, this means model truly lacks it.
+			log.Printf("Pruning extra column %s.%s", tableName, name)
+			if err := db.Migrator().DropColumn(model, name); err != nil {
+				log.Printf("Failed to drop column %s.%s: %v", tableName, name, err)
+			}
+		}
+	}
+	return nil
 }
 
 // connectRedis initializes Redis connection

@@ -58,14 +58,14 @@ func IsValidFileExtension(filename string, allowedExtensions []string) bool {
 	if filename == "" {
 		return false
 	}
-	
+
 	parts := strings.Split(filename, ".")
 	if len(parts) < 2 {
 		return false
 	}
-	
+
 	ext := strings.ToLower(parts[len(parts)-1])
-	
+
 	for _, allowedExt := range allowedExtensions {
 		if ext == strings.ToLower(allowedExt) {
 			return true
@@ -78,9 +78,9 @@ func IsValidFileExtension(filename string, allowedExtensions []string) bool {
 func SanitizeString(input string) string {
 	// Remove null bytes and control characters
 	input = strings.ReplaceAll(input, "\x00", "")
-	
+
 	// Trim whitespace
 	input = strings.TrimSpace(input)
-	
+
 	return input
 }

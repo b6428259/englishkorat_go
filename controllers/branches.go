@@ -14,9 +14,9 @@ type BranchController struct{}
 // GetBranches returns all branches
 func (bc *BranchController) GetBranches(c *fiber.Ctx) error {
 	var branches []models.Branch
-	
+
 	query := database.DB.Model(&models.Branch{})
-	
+
 	// Filter by active status if specified
 	if active := c.Query("active"); active != "" {
 		if active == "true" {

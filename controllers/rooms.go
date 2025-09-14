@@ -184,8 +184,8 @@ func (rc *RoomController) UpdateRoom(c *fiber.Ctx) error {
 		if updateData.BranchID != 0 {
 			branchID = updateData.BranchID
 		}
-		
-		if err := database.DB.Where("branch_id = ? AND room_name = ? AND id != ?", 
+
+		if err := database.DB.Where("branch_id = ? AND room_name = ? AND id != ?",
 			branchID, updateData.RoomName, room.ID).First(&existingRoom).Error; err == nil {
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
 				"error": "Room with this name already exists in the branch",

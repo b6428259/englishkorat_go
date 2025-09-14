@@ -13,32 +13,32 @@ import (
 
 type CreateScheduleRequest struct {
 	// Core schedule information
-	ScheduleName          string    `json:"schedule_name" validate:"required"`
-	ScheduleType          string    `json:"schedule_type" validate:"required,oneof=class meeting event holiday appointment"`
-	
+	ScheduleName string `json:"schedule_name" validate:"required"`
+	ScheduleType string `json:"schedule_type" validate:"required,oneof=class meeting event holiday appointment"`
+
 	// For class schedules
-	GroupID               *uint     `json:"group_id"` // Required for class schedules
-	
+	GroupID *uint `json:"group_id"` // Required for class schedules
+
 	// For event/appointment schedules
-	ParticipantUserIDs    []uint    `json:"participant_user_ids"` // User IDs for events/appointments
-	
+	ParticipantUserIDs []uint `json:"participant_user_ids"` // User IDs for events/appointments
+
 	// Schedule timing
-	RecurringPattern      string    `json:"recurring_pattern" validate:"required,oneof=daily weekly bi-weekly monthly yearly custom"`
-	TotalHours            int       `json:"total_hours" validate:"required,min=1"`
-	HoursPerSession       int       `json:"hours_per_session" validate:"required,min=1"`
-	SessionPerWeek        int       `json:"session_per_week" validate:"required,min=1"`
-	StartDate             time.Time `json:"start_date" validate:"required"`
-	EstimatedEndDate      time.Time `json:"estimated_end_date" validate:"required"`
-	
+	RecurringPattern string    `json:"recurring_pattern" validate:"required,oneof=daily weekly bi-weekly monthly yearly custom"`
+	TotalHours       int       `json:"total_hours" validate:"required,min=1"`
+	HoursPerSession  int       `json:"hours_per_session" validate:"required,min=1"`
+	SessionPerWeek   int       `json:"session_per_week" validate:"required,min=1"`
+	StartDate        time.Time `json:"start_date" validate:"required"`
+	EstimatedEndDate time.Time `json:"estimated_end_date" validate:"required"`
+
 	// Default assignments
-	DefaultTeacherID      *uint     `json:"default_teacher_id"`
-	DefaultRoomID         *uint     `json:"default_room_id"`
-	
+	DefaultTeacherID *uint `json:"default_teacher_id"`
+	DefaultRoomID    *uint `json:"default_room_id"`
+
 	// Settings
-	AutoRescheduleHoliday bool      `json:"auto_reschedule"`
-	Notes                 string    `json:"notes"`
-	SessionStartTime      string    `json:"session_start_time" validate:"required"` // เวลาเริ่มต้นของแต่ละ session เช่น "09:00"
-	CustomRecurringDays   []int     `json:"custom_recurring_days,omitempty"`        // สำหรับ custom pattern [0=วันอาทิตย์, 1=วันจันทร์, ...]
+	AutoRescheduleHoliday bool   `json:"auto_reschedule"`
+	Notes                 string `json:"notes"`
+	SessionStartTime      string `json:"session_start_time" validate:"required"` // เวลาเริ่มต้นของแต่ละ session เช่น "09:00"
+	CustomRecurringDays   []int  `json:"custom_recurring_days,omitempty"`        // สำหรับ custom pattern [0=วันอาทิตย์, 1=วันจันทร์, ...]
 }
 
 type ConfirmScheduleRequest struct {
@@ -75,13 +75,13 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 		if req.GroupID == nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "group_id is required for class schedules"})
 		}
-		
+
 		// Validate that the group exists and has members with proper payment status
 		var group models.Group
 		if err := database.DB.Preload("Members").First(&group, *req.GroupID).Error; err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Group not found"})
 		}
-		
+
 		// Check if group has members with appropriate payment status
 		hasEligibleMembers := false
 		for _, member := range group.Members {
@@ -90,7 +90,7 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 				break
 			}
 		}
-		
+
 		if !hasEligibleMembers {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Group must have at least one member with deposit paid or fully paid status"})
 		}
@@ -186,7 +186,7 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 		// Use default teacher and room if provided
 		session.AssignedTeacherID = req.DefaultTeacherID
 		session.RoomID = req.DefaultRoomID
-		
+
 		if err := tx.Create(&session).Error; err != nil {
 			tx.Rollback()
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create sessions"})
@@ -195,7 +195,7 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 
 	// สร้าง notification สำหรับ assigned users
 	var notificationUserIDs []uint
-	
+
 	if req.ScheduleType == "class" && req.DefaultTeacherID != nil {
 		// For class schedules - notify the default teacher
 		notificationUserIDs = append(notificationUserIDs, *req.DefaultTeacherID)
@@ -258,11 +258,11 @@ func (sc *ScheduleController) GetMySchedules(c *fiber.Ctx) error {
 	if userRole == "teacher" || userRole == "admin" || userRole == "owner" {
 		// ครูดู schedule ที่ตัวเองถูก assign (ทั้ง default teacher และ session teacher)
 		query := database.DB.Preload("Group.Course").Preload("DefaultRoom").Preload("DefaultTeacher")
-		
+
 		if userRole == "teacher" {
 			query = query.Where("default_teacher_id = ? OR id IN (SELECT DISTINCT schedule_id FROM schedule_sessions WHERE assigned_teacher_id = ?)", userID, userID)
 		}
-		
+
 		err := query.Find(&schedules).Error
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch schedules"})
@@ -307,7 +307,7 @@ func (sc *ScheduleController) GetTeachersSchedules(c *fiber.Ctx) error {
 	endDate := c.Query("end_date")
 	teacherID := c.Query("teacher_id")
 	branchID := c.Query("branch_id")
-	
+
 	// Build query for schedules with sessions
 	query := database.DB.Table("schedules").
 		Select(`schedules.*, 
@@ -323,7 +323,7 @@ func (sc *ScheduleController) GetTeachersSchedules(c *fiber.Ctx) error {
 	if startDate != "" && endDate != "" {
 		query = query.Where("schedule_sessions.session_date BETWEEN ? AND ?", startDate, endDate)
 	}
-	
+
 	if teacherID != "" {
 		query = query.Where("schedules.default_teacher_id = ? OR schedule_sessions.assigned_teacher_id = ?", teacherID, teacherID)
 	}
@@ -401,9 +401,9 @@ func (sc *ScheduleController) GetTeachersSchedules(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"success":   true,
-		"data":      response,
-		"total":     len(response),
+		"success": true,
+		"data":    response,
+		"total":   len(response),
 		"filters": map[string]interface{}{
 			"start_date": startDate,
 			"end_date":   endDate,
@@ -495,26 +495,26 @@ func (sc *ScheduleController) GetCalendarView(c *fiber.Ctx) error {
 		if session.Schedule.Group != nil {
 			for _, member := range session.Schedule.Group.Members {
 				participants = append(participants, map[string]interface{}{
-					"id":              member.Student.ID,
-					"name":            fmt.Sprintf("%s %s", member.Student.FirstName, member.Student.LastName),
-					"nickname":        member.Student.NicknameEn,
-					"payment_status":  member.PaymentStatus,
+					"id":             member.Student.ID,
+					"name":           fmt.Sprintf("%s %s", member.Student.FirstName, member.Student.LastName),
+					"nickname":       member.Student.NicknameEn,
+					"payment_status": member.PaymentStatus,
 				})
 			}
 		}
 
 		event := map[string]interface{}{
-			"id":           session.ID,
-			"schedule_id":  session.ScheduleID,
-			"title":        session.Schedule.ScheduleName,
-			"date":         session.Session_date.Format("2006-01-02"),
-			"start_time":   session.Start_time.Format("15:04"),
-			"end_time":     session.End_time.Format("15:04"),
-			"status":       session.Status,
+			"id":             session.ID,
+			"schedule_id":    session.ScheduleID,
+			"title":          session.Schedule.ScheduleName,
+			"date":           session.Session_date.Format("2006-01-02"),
+			"start_time":     session.Start_time.Format("15:04"),
+			"end_time":       session.End_time.Format("15:04"),
+			"status":         session.Status,
 			"session_number": session.Session_number,
-			"week_number":  session.Week_number,
-			"is_makeup":    session.Is_makeup,
-			"type":         "class",
+			"week_number":    session.Week_number,
+			"is_makeup":      session.Is_makeup,
+			"type":           "class",
 			"teacher": map[string]interface{}{
 				"id":       nil,
 				"name":     "",
@@ -565,7 +565,7 @@ func (sc *ScheduleController) GetCalendarView(c *fiber.Ctx) error {
 		// Parse start and end dates
 		startDateParsed, _ := time.Parse("2006-01-02", startDate)
 		endDateParsed, _ := time.Parse("2006-01-02", endDate)
-		
+
 		// Get Thai holidays for the date range
 		holidayDates, err := services.GetThaiHolidays(startDateParsed.Year(), endDateParsed.Year())
 		if err == nil {
@@ -654,11 +654,11 @@ func (sc *ScheduleController) UpdateSessionStatus(c *fiber.Ctx) error {
 	if userRole == "teacher" {
 		// ตรวจสอบสิทธิ์สำหรับ teacher
 		hasPermission := false
-		
+
 		// สำหรับ class schedules - ตรวจสอบว่าเป็น default teacher หรือ assigned teacher
 		if session.Schedule.ScheduleType == "class" {
 			if (session.Schedule.DefaultTeacherID != nil && *session.Schedule.DefaultTeacherID == userID) ||
-			   (session.AssignedTeacherID != nil && *session.AssignedTeacherID == userID) {
+				(session.AssignedTeacherID != nil && *session.AssignedTeacherID == userID) {
 				hasPermission = true
 			}
 		} else if session.Schedule.ScheduleType != "class" {
@@ -668,7 +668,7 @@ func (sc *ScheduleController) UpdateSessionStatus(c *fiber.Ctx) error {
 				hasPermission = true
 			}
 		}
-		
+
 		if !hasPermission {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "You are not assigned to this schedule"})
 		}
@@ -830,7 +830,7 @@ func (sc *ScheduleController) CreateMakeupSession(c *fiber.Ctx) error {
 	tx.Commit()
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-		"message":       "Makeup session created successfully",
+		"message":        "Makeup session created successfully",
 		"makeup_session": makeupSession,
 	})
 }
@@ -853,7 +853,7 @@ func (sc *ScheduleController) ConfirmSchedule(c *fiber.Ctx) error {
 
 	// ตรวจสอบสิทธิ์ในการยืนยัน schedule
 	canConfirm := false
-	
+
 	// Admin/Owner สามารถยืนยันให้ใครก็ได้
 	if userRole == "admin" || userRole == "owner" {
 		canConfirm = true
@@ -869,7 +869,7 @@ func (sc *ScheduleController) ConfirmSchedule(c *fiber.Ctx) error {
 			}
 		}
 	}
-	
+
 	if !canConfirm {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "You are not authorized to confirm this schedule"})
 	}

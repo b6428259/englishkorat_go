@@ -953,9 +953,9 @@ func (sc *StudentController) NewPublicRegisterStudent(c *fiber.Ctx) error {
 			// Create notification message
 			title := "New Student Registration"
 			titleTh := "การลงทะเบียนนักเรียนใหม่"
-			message := fmt.Sprintf("New student %s %s has registered (%s registration). Please review and process.", 
+			message := fmt.Sprintf("New student %s %s has registered (%s registration). Please review and process.",
 				student.FirstName, student.LastName, student.RegistrationType)
-			messageTh := fmt.Sprintf("นักเรียนใหม่ %s %s ได้ลงทะเบียนแล้ว (แบบ%s) กรุณาตรวจสอบและดำเนินการ", 
+			messageTh := fmt.Sprintf("นักเรียนใหม่ %s %s ได้ลงทะเบียนแล้ว (แบบ%s) กรุณาตรวจสอบและดำเนินการ",
 				student.FirstName, student.LastName, getRegistrationTypeInThai(student.RegistrationType))
 
 			// Send notification using the notification service

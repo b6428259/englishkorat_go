@@ -104,7 +104,7 @@ func (ns *NotificationScheduler) sendUpcomingClassNotification(session models.Sc
 
 	// ดึงรายชื่อผู้เข้าร่วม
 	var users []models.User
-	
+
 	// For class schedules - get users from group members
 	if schedule.GroupID != nil {
 		var groupMembers []models.GroupMember
@@ -113,7 +113,7 @@ func (ns *NotificationScheduler) sendUpcomingClassNotification(session models.Sc
 			fmt.Printf("Error fetching group members for group %d: %v\n", *schedule.GroupID, err)
 			return
 		}
-		
+
 		for _, member := range groupMembers {
 			if member.Student.UserID != nil {
 				var user models.User
@@ -130,7 +130,7 @@ func (ns *NotificationScheduler) sendUpcomingClassNotification(session models.Sc
 			fmt.Printf("Error fetching participants for schedule %d: %v\n", schedule.ID, err)
 			return
 		}
-		
+
 		for _, participant := range participants {
 			users = append(users, participant.User)
 		}
@@ -141,7 +141,7 @@ func (ns *NotificationScheduler) sendUpcomingClassNotification(session models.Sc
 	if teacherID == nil {
 		teacherID = schedule.DefaultTeacherID
 	}
-	
+
 	if teacherID != nil {
 		var assignedTeacher models.User
 		if err := ns.db.First(&assignedTeacher, *teacherID).Error; err == nil {
@@ -204,7 +204,7 @@ func (ns *NotificationScheduler) SendDailyScheduleReminder() {
 	for _, session := range sessions {
 		// ดึงรายชื่อผู้เข้าร่วม
 		var users []models.User
-		
+
 		// For class schedules - get users from group members
 		if session.Schedule.GroupID != nil {
 			var groupMembers []models.GroupMember
@@ -235,7 +235,7 @@ func (ns *NotificationScheduler) SendDailyScheduleReminder() {
 		if teacherID == nil {
 			teacherID = session.Schedule.DefaultTeacherID
 		}
-		
+
 		if teacherID != nil {
 			var assignedTeacher models.User
 			if err := ns.db.First(&assignedTeacher, *teacherID).Error; err == nil {

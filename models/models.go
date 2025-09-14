@@ -190,11 +190,11 @@ type Group struct {
 // GroupMember model - represents students in a group with individual payment status
 type GroupMember struct {
 	BaseModel
-	GroupID       uint   `json:"group_id" gorm:"not null"`
-	StudentID     uint   `json:"student_id" gorm:"not null"`
-	PaymentStatus string `json:"payment_status" gorm:"size:50;default:'pending';type:enum('pending','deposit_paid','fully_paid')"`
-	JoinedAt      time.Time `json:"joined_at" gorm:"default:CURRENT_TIMESTAMP"`
-	Status        string `json:"status" gorm:"size:50;default:'active';type:enum('active','inactive','suspended')"`
+	GroupID       uint       `json:"group_id" gorm:"not null"`
+	StudentID     uint       `json:"student_id" gorm:"not null"`
+	PaymentStatus string     `json:"payment_status" gorm:"size:50;default:'pending';type:enum('pending','deposit_paid','fully_paid')"`
+	JoinedAt      *time.Time `json:"joined_at"`
+	Status        string     `json:"status" gorm:"size:50;default:'active';type:enum('active','inactive','suspended')"`
 
 	// Relationships
 	Group   Group   `json:"group,omitempty" gorm:"foreignKey:GroupID"`
@@ -336,23 +336,23 @@ type LogArchive struct {
 
 type Schedule_Sessions struct {
 	BaseModel
-	ScheduleID         uint       `json:"schedule_id" gorm:"not null"`
-	Session_date       time.Time  `json:"session_date" gorm:"not null"`
-	Start_time         time.Time  `json:"start_time" gorm:"not null"`
-	End_time           time.Time  `json:"end_time" gorm:"not null"`
-	Session_number     int        `json:"session_number" gorm:"not null"`
-	Week_number        int        `json:"week_number" gorm:"not null"`
-	Status             string     `json:"status" gorm:"size:50;default:'scheduled';type:enum('scheduled','confirmed','pending','completed','cancelled','rescheduled','no-show')"` // scheduled, confirmed, pending, completed, cancelled, rescheduled, no-show
-	Cancelling_Reason  string     `json:"cancelling_reason" gorm:"type:text"`
-	Is_makeup          bool       `json:"is_makeup" gorm:"default:false"` //เป็นชดเชยไหม
-	Makeup_for_session_id *uint   `json:"makeup_for_session_id" gorm:"default:null"` // ชดเชยให้กับ Session ID ไหน
-	Notes              string     `json:"notes" gorm:"type:text"`
-	
+	ScheduleID            uint      `json:"schedule_id" gorm:"not null"`
+	Session_date          time.Time `json:"session_date" gorm:"not null"`
+	Start_time            time.Time `json:"start_time" gorm:"not null"`
+	End_time              time.Time `json:"end_time" gorm:"not null"`
+	Session_number        int       `json:"session_number" gorm:"not null"`
+	Week_number           int       `json:"week_number" gorm:"not null"`
+	Status                string    `json:"status" gorm:"size:50;default:'scheduled';type:enum('scheduled','confirmed','pending','completed','cancelled','rescheduled','no-show')"` // scheduled, confirmed, pending, completed, cancelled, rescheduled, no-show
+	Cancelling_Reason     string    `json:"cancelling_reason" gorm:"type:text"`
+	Is_makeup             bool      `json:"is_makeup" gorm:"default:false"`            //เป็นชดเชยไหม
+	Makeup_for_session_id *uint     `json:"makeup_for_session_id" gorm:"default:null"` // ชดเชยให้กับ Session ID ไหน
+	Notes                 string    `json:"notes" gorm:"type:text"`
+
 	// New fields for enhanced session management
-	AssignedTeacherID  *uint      `json:"assigned_teacher_id" gorm:"default:null"` // Teacher can be different per session
-	RoomID             *uint      `json:"room_id" gorm:"default:null"` // Room can be different per session
-	ConfirmedAt        *time.Time `json:"confirmed_at"`
-	ConfirmedByUserID  *uint      `json:"confirmed_by_user_id"`
+	AssignedTeacherID *uint      `json:"assigned_teacher_id" gorm:"default:null"` // Teacher can be different per session
+	RoomID            *uint      `json:"room_id" gorm:"default:null"`             // Room can be different per session
+	ConfirmedAt       *time.Time `json:"confirmed_at"`
+	ConfirmedByUserID *uint      `json:"confirmed_by_user_id"`
 
 	// Relationships
 	Schedule        Schedules `json:"schedule" gorm:"foreignKey:ScheduleID"`
@@ -364,15 +364,15 @@ type Schedule_Sessions struct {
 type Schedules struct {
 	BaseModel
 	// Core schedule information
-	ScheduleName       string     `json:"schedule_name" gorm:"size:100;not null"`
-	ScheduleType       string     `json:"schedule_type" gorm:"size:50;type:enum('class','meeting','event','holiday','appointment')"`             // class, meeting, event, holiday, appointment
-	
+	ScheduleName string `json:"schedule_name" gorm:"size:100;not null"`
+	ScheduleType string `json:"schedule_type" gorm:"size:50;type:enum('class','meeting','event','holiday','appointment')"` // class, meeting, event, holiday, appointment
+
 	// For class schedules - link to group
-	GroupID            *uint      `json:"group_id" gorm:"default:null"` // For class schedules - links to learning group
-	
+	GroupID *uint `json:"group_id" gorm:"default:null"` // For class schedules - links to learning group
+
 	// For event/appointment schedules - creator and participants
-	CreatedByUserID    *uint      `json:"created_by_user_id" gorm:"default:null"` // Who created this schedule
-	
+	CreatedByUserID *uint `json:"created_by_user_id" gorm:"default:null"` // Who created this schedule
+
 	// Schedule timing and recurrence
 	Recurring_pattern  string     `json:"recurring_pattern" gorm:"size:100;type:enum('daily','weekly','bi-weekly','monthly','yearly','custom')"` // daily, weekly, bi-weekly, monthly, yearly, custom
 	Total_hours        int        `json:"total_hours"`
@@ -381,11 +381,11 @@ type Schedules struct {
 	Start_date         time.Time  `json:"start_date"`
 	Estimated_end_date time.Time  `json:"estimated_end_date"`
 	Actual_end_date    *time.Time `json:"actual_end_date"`
-	
+
 	// Default assignments (can be overridden per session)
-	DefaultTeacherID   *uint      `json:"default_teacher_id" gorm:"default:null"` // Default teacher for sessions
-	DefaultRoomID      *uint      `json:"default_room_id" gorm:"default:null"`    // Default room for sessions
-	
+	DefaultTeacherID *uint `json:"default_teacher_id" gorm:"default:null"` // Default teacher for sessions
+	DefaultRoomID    *uint `json:"default_room_id" gorm:"default:null"`    // Default room for sessions
+
 	// Schedule management
 	Status                  string `json:"status" gorm:"size:50;default:'scheduled';type:enum('scheduled','paused','completed','cancelled','assigned')"` // scheduled, active, paused, completed, cancelled
 	Auto_Reschedule_holiday bool   `json:"auto_reschedule" gorm:"default:true"`
@@ -393,11 +393,11 @@ type Schedules struct {
 	Admin_assigned          string `json:"admin_assigned" gorm:"size:200"`
 
 	// Relationships
-	Group         *Group `json:"group,omitempty" gorm:"foreignKey:GroupID"`
-	CreatedBy     *User  `json:"created_by,omitempty" gorm:"foreignKey:CreatedByUserID"`
-	DefaultTeacher *User  `json:"default_teacher,omitempty" gorm:"foreignKey:DefaultTeacherID"`
-	DefaultRoom    *Room  `json:"default_room,omitempty" gorm:"foreignKey:DefaultRoomID"`
-	Sessions      []Schedule_Sessions `json:"sessions,omitempty" gorm:"foreignKey:ScheduleID"`
+	Group          *Group              `json:"group,omitempty" gorm:"foreignKey:GroupID"`
+	CreatedBy      *User               `json:"created_by,omitempty" gorm:"foreignKey:CreatedByUserID"`
+	DefaultTeacher *User               `json:"default_teacher,omitempty" gorm:"foreignKey:DefaultTeacherID"`
+	DefaultRoom    *Room               `json:"default_room,omitempty" gorm:"foreignKey:DefaultRoomID"`
+	Sessions       []Schedule_Sessions `json:"sessions,omitempty" gorm:"foreignKey:ScheduleID"`
 }
 
 type Schedules_or_Sessions_Comment struct {
@@ -413,14 +413,14 @@ type Schedules_or_Sessions_Comment struct {
 	User     User              `json:"user" gorm:"foreignKey:UserID"`
 }
 
-// ScheduleParticipant model - for event/appointment participants  
+// ScheduleParticipant model - for event/appointment participants
 type ScheduleParticipant struct {
 	BaseModel
 	ScheduleID uint   `json:"schedule_id" gorm:"not null"`
 	UserID     uint   `json:"user_id" gorm:"not null"`
 	Role       string `json:"role" gorm:"size:50;default:'participant';type:enum('organizer','participant','observer')"`
 	Status     string `json:"status" gorm:"size:50;default:'invited';type:enum('invited','confirmed','declined','tentative')"`
-	
+
 	// Relationships
 	Schedule Schedules `json:"schedule" gorm:"foreignKey:ScheduleID"`
 	User     User      `json:"user" gorm:"foreignKey:UserID"`
@@ -429,14 +429,14 @@ type ScheduleParticipant struct {
 // SessionConfirmation model - tracks session confirmations
 type SessionConfirmation struct {
 	BaseModel
-	SessionID     uint       `json:"session_id" gorm:"not null"`
-	UserID        uint       `json:"user_id" gorm:"not null"`
-	Status        string     `json:"status" gorm:"size:50;default:'pending';type:enum('pending','confirmed','declined','no_show')"`
-	ConfirmedAt   *time.Time `json:"confirmed_at"`
-	DeclinedAt    *time.Time `json:"declined_at"`
-	Reason        string     `json:"reason" gorm:"type:text"` // Reason for decline or no-show
-	
-	// Relationships  
+	SessionID   uint       `json:"session_id" gorm:"not null"`
+	UserID      uint       `json:"user_id" gorm:"not null"`
+	Status      string     `json:"status" gorm:"size:50;default:'pending';type:enum('pending','confirmed','declined','no_show')"`
+	ConfirmedAt *time.Time `json:"confirmed_at"`
+	DeclinedAt  *time.Time `json:"declined_at"`
+	Reason      string     `json:"reason" gorm:"type:text"` // Reason for decline or no-show
+
+	// Relationships
 	Session Schedule_Sessions `json:"session" gorm:"foreignKey:SessionID"`
 	User    User              `json:"user" gorm:"foreignKey:UserID"`
 }
@@ -444,17 +444,17 @@ type SessionConfirmation struct {
 // NotificationPreference model - configurable notification settings
 type NotificationPreference struct {
 	BaseModel
-	UserID               uint `json:"user_id" gorm:"not null;uniqueIndex"`
+	UserID                  uint `json:"user_id" gorm:"not null;uniqueIndex"`
 	EnableScheduleReminders bool `json:"enable_schedule_reminders" gorm:"default:true"`
-	
+
 	// Reminder timings (in minutes before session)
-	FirstReminderMinutes  *int `json:"first_reminder_minutes" gorm:"default:1440"`  // 24 hours = 1440 minutes
-	SecondReminderMinutes *int `json:"second_reminder_minutes" gorm:"default:60"`   // 1 hour
-	ThirdReminderMinutes  *int `json:"third_reminder_minutes" gorm:"default:15"`    // 15 minutes
-	
+	FirstReminderMinutes  *int `json:"first_reminder_minutes" gorm:"default:1440"` // 24 hours = 1440 minutes
+	SecondReminderMinutes *int `json:"second_reminder_minutes" gorm:"default:60"`  // 1 hour
+	ThirdReminderMinutes  *int `json:"third_reminder_minutes" gorm:"default:15"`   // 15 minutes
+
 	// Number of reminders to send (1-3)
 	ReminderCount int `json:"reminder_count" gorm:"default:2;check:reminder_count >= 1 AND reminder_count <= 3"`
-	
+
 	// Relationship
 	User User `json:"user" gorm:"foreignKey:UserID"`
 }

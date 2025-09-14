@@ -26,6 +26,10 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	groupController := &controllers.GroupController{}
 	wsController := controllers.NewWebSocketController(wsHub)
 
+
+	// localhost:3000/api/auth/login
+
+
 	// API group
 	api := app.Group("/api")
 

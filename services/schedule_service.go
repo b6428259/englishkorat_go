@@ -337,7 +337,7 @@ func NotifyUpcomingClass(sessionID uint, minutesBefore int) {
 
 	// ดึงรายชื่อผู้เข้าร่วม (ครูและนักเรียน)
 	var users []models.User
-	
+
 	// For class schedules - get users from group members
 	if schedule.GroupID != nil {
 		var groupMembers []models.GroupMember
@@ -368,7 +368,7 @@ func NotifyUpcomingClass(sessionID uint, minutesBefore int) {
 	if teacherID == nil {
 		teacherID = schedule.DefaultTeacherID
 	}
-	
+
 	if teacherID != nil {
 		var assignedTeacher models.User
 		if err := database.DB.First(&assignedTeacher, *teacherID).Error; err == nil {
