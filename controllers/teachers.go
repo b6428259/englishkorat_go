@@ -354,6 +354,13 @@ func (tc *TeacherController) GetTeachersByBranch(c *fiber.Ctx) error {
 func (tc *TeacherController) GetTeacherSpecializations(c *fiber.Ctx) error {
 	specializations := []string{
 		"Kid Jolly Phonics",
+		"Kid English for Kids",
+		"Kid Grammar",
+		"Kid Reading",
+		"Kid Writing",
+		"Kid Listening & Speaking",
+		"Kid Phonics",
+		"Kid Storytelling",
 		"Kid Conversation",
 		"Adult Conversation",
 		"Adult Test preparation",
