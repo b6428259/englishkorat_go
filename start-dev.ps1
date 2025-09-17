@@ -162,9 +162,6 @@ if ($dbSuccess -and $redisSuccess) {
         try {
             # To speed up local development, skip automatic migrations/schema checks.
             # The application honors the SKIP_MIGRATE environment variable (set to "true").
-            Write-Host "Setting SKIP_MIGRATE=true for this session to skip automatic migrations at startup." -ForegroundColor Yellow
-            $env:SKIP_MIGRATE = "true"
-
             go run main.go
         }
     finally {

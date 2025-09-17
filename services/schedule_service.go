@@ -66,6 +66,9 @@ func CheckRoomConflict(roomID uint, startDate, endDate time.Time, sessionStartTi
 // sessionsOverlap ตรวจสอบว่า session 2 session ทับกันหรือไม่
 func sessionsOverlap(session1, session2 models.Schedule_Sessions) bool {
 	// ตรวจสอบวันที่เดียวกัน
+	if session1.Session_date == nil || session2.Session_date == nil {
+		return false
+	}
 	date1 := session1.Session_date.Format("2006-01-02")
 	date2 := session2.Session_date.Format("2006-01-02")
 	if date1 != date2 {
@@ -73,6 +76,9 @@ func sessionsOverlap(session1, session2 models.Schedule_Sessions) bool {
 	}
 
 	// ตรวจสอบเวลาทับกัน
+	if session1.Start_time == nil || session1.End_time == nil || session2.Start_time == nil || session2.End_time == nil {
+		return false
+	}
 	start1 := session1.Start_time.Format("15:04")
 	end1 := session1.End_time.Format("15:04")
 	start2 := session2.Start_time.Format("15:04")
@@ -113,10 +119,14 @@ func generateSessionTimes(startDate, endDate time.Time, sessionStartTime time.Ti
 				sessionStartTime.Hour(), sessionStartTime.Minute(), 0, 0, current.Location())
 			sessionEnd := sessionStart.Add(time.Duration(hoursPerSession) * time.Hour)
 
+			// Convert times to pointers to match nullable model fields
+			sd := current
+			ss := sessionStart
+			se := sessionEnd
 			session := models.Schedule_Sessions{
-				Session_date:          current,
-				Start_time:            sessionStart,
-				End_time:              sessionEnd,
+				Session_date:          &sd,
+				Start_time:            &ss,
+				End_time:              &se,
 				Session_number:        sessionNumber,
 				Status:                "scheduled",
 				Makeup_for_session_id: nil,
@@ -174,10 +184,13 @@ func GenerateScheduleSessions(schedule models.Schedules, sessionStartTime string
 				startTime.Hour(), startTime.Minute(), 0, 0, current.Location())
 			sessionEnd := sessionStart.Add(time.Duration(schedule.Hours_per_session) * time.Hour)
 
+			sd := current
+			ss := sessionStart
+			se := sessionEnd
 			session := models.Schedule_Sessions{
-				Session_date:          current,
-				Start_time:            sessionStart,
-				End_time:              sessionEnd,
+				Session_date:          &sd,
+				Start_time:            &ss,
+				End_time:              &se,
 				Session_number:        sessionNumber,
 				Week_number:           weekNumber,
 				Status:                "scheduled",
@@ -253,11 +266,15 @@ func RescheduleSessions(sessions []models.Schedule_Sessions, holidays []time.Tim
 			}
 
 			// อัพเดทวันที่ session
-			session.Session_date = newDate
-			session.Start_time = time.Date(newDate.Year(), newDate.Month(), newDate.Day(),
+			// Update session date/time pointers
+			nd := newDate
+			session.Session_date = &nd
+			ss := time.Date(newDate.Year(), newDate.Month(), newDate.Day(),
 				session.Start_time.Hour(), session.Start_time.Minute(), 0, 0, newDate.Location())
-			session.End_time = time.Date(newDate.Year(), newDate.Month(), newDate.Day(),
+			se := time.Date(newDate.Year(), newDate.Month(), newDate.Day(),
 				session.End_time.Hour(), session.End_time.Minute(), 0, 0, newDate.Location())
+			session.Start_time = &ss
+			session.End_time = &se
 			session.Notes = "Rescheduled due to holiday"
 		}
 

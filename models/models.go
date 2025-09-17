@@ -10,8 +10,8 @@ import (
 // Base model with common fields
 type BaseModel struct {
 	ID        uint           `json:"id" gorm:"primaryKey"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	CreatedAt *time.Time     `json:"created_at,omitempty"`
+	UpdatedAt *time.Time     `json:"updated_at,omitempty"`
 	DeletedAt gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
 }
 
@@ -80,7 +80,7 @@ type User struct {
 	BaseModel
 	Username             string     `json:"username" gorm:"size:100;not null;uniqueIndex"`
 	Password             string     `json:"-" gorm:"size:255;not null"`
-	Email                string     `json:"email" gorm:"size:255;uniqueIndex"`
+	Email                *string    `json:"email" gorm:"size:255;uniqueIndex;default:null"`
 	Phone                string     `json:"phone" gorm:"size:20"`
 	LineID               string     `json:"line_id" gorm:"size:100"`
 	Role                 string     `json:"role" gorm:"size:50;not null;default:'student';type:enum('owner','admin','teacher','student')"` // owner, admin, teacher, student
@@ -217,9 +217,9 @@ type Student_Group struct {
 
 type LineGroup struct {
 	BaseModel
-    ID        uint   `json:"id" gorm:"primaryKey"`
-    GroupName string `json:"group_name" gorm:"unique;not null"`
-    Token     string `json:"token" gorm:"size:255;not null"` // LINE Notify token ของกลุ่มนั้น
+	ID        uint   `json:"id" gorm:"primaryKey"`
+	GroupName string `json:"group_name" gorm:"unique;not null"`
+	Token     string `json:"token" gorm:"size:255;not null"` // LINE Notify token ของกลุ่มนั้น
 }
 
 type User_inCourse struct {
@@ -276,8 +276,8 @@ type Course struct {
 	BranchID    uint   `json:"branch_id"`
 	Description string `json:"description" gorm:"type:text"`
 	Status      string `json:"status" gorm:"size:50;default:'active';type:enum('active','inactive')"` // active, inactive
-	CategoryID  uint   `json:"category_id"`
-	DurationID  uint   `json:"duration_id"`
+	CategoryID  *uint  `json:"category_id" gorm:"default:null"`
+	DurationID  *uint  `json:"duration_id" gorm:"default:null"`
 	Level       string `json:"level" gorm:"size:100"`
 
 	// Relationships
@@ -343,17 +343,17 @@ type LogArchive struct {
 
 type Schedule_Sessions struct {
 	BaseModel
-	ScheduleID            uint      `json:"schedule_id" gorm:"not null"`
-	Session_date          time.Time `json:"session_date" gorm:"not null"`
-	Start_time            time.Time `json:"start_time" gorm:"not null"`
-	End_time              time.Time `json:"end_time" gorm:"not null"`
-	Session_number        int       `json:"session_number" gorm:"not null"`
-	Week_number           int       `json:"week_number" gorm:"not null"`
-	Status                string    `json:"status" gorm:"size:50;default:'scheduled';type:enum('scheduled','confirmed','pending','completed','cancelled','rescheduled','no-show')"` // scheduled, confirmed, pending, completed, cancelled, rescheduled, no-show
-	Cancelling_Reason     string    `json:"cancelling_reason" gorm:"type:text"`
-	Is_makeup             bool      `json:"is_makeup" gorm:"default:false"`            //เป็นชดเชยไหม
-	Makeup_for_session_id *uint     `json:"makeup_for_session_id" gorm:"default:null"` // ชดเชยให้กับ Session ID ไหน
-	Notes                 string    `json:"notes" gorm:"type:text"`
+	ScheduleID            uint       `json:"schedule_id" gorm:"not null"`
+	Session_date          *time.Time `json:"session_date,omitempty" gorm:"not null"`
+	Start_time            *time.Time `json:"start_time,omitempty" gorm:"not null"`
+	End_time              *time.Time `json:"end_time,omitempty" gorm:"not null"`
+	Session_number        int        `json:"session_number" gorm:"not null"`
+	Week_number           int        `json:"week_number" gorm:"not null"`
+	Status                string     `json:"status" gorm:"size:50;default:'scheduled';type:enum('scheduled','confirmed','pending','completed','cancelled','rescheduled','no-show')"` // scheduled, confirmed, pending, completed, cancelled, rescheduled, no-show
+	Cancelling_Reason     string     `json:"cancelling_reason" gorm:"type:text"`
+	Is_makeup             bool       `json:"is_makeup" gorm:"default:false"`            //เป็นชดเชยไหม
+	Makeup_for_session_id *uint      `json:"makeup_for_session_id" gorm:"default:null"` // ชดเชยให้กับ Session ID ไหน
+	Notes                 string     `json:"notes" gorm:"type:text"`
 
 	// New fields for enhanced session management
 	AssignedTeacherID *uint      `json:"assigned_teacher_id" gorm:"default:null"` // Teacher can be different per session
@@ -362,10 +362,10 @@ type Schedule_Sessions struct {
 	ConfirmedByUserID *uint      `json:"confirmed_by_user_id"`
 
 	// Relationships
-	Schedule        Schedules `json:"schedule" gorm:"foreignKey:ScheduleID"`
-	AssignedTeacher *User     `json:"assigned_teacher,omitempty" gorm:"foreignKey:AssignedTeacherID"`
-	Room            *Room     `json:"room,omitempty" gorm:"foreignKey:RoomID"`
-	ConfirmedBy     *User     `json:"confirmed_by,omitempty" gorm:"foreignKey:ConfirmedByUserID"`
+	Schedule        *Schedules `json:"schedule,omitempty" gorm:"foreignKey:ScheduleID"`
+	AssignedTeacher *User      `json:"assigned_teacher,omitempty" gorm:"foreignKey:AssignedTeacherID"`
+	Room            *Room      `json:"room,omitempty" gorm:"foreignKey:RoomID"`
+	ConfirmedBy     *User      `json:"confirmed_by,omitempty" gorm:"foreignKey:ConfirmedByUserID"`
 }
 
 type Schedules struct {
@@ -409,15 +409,15 @@ type Schedules struct {
 
 type Schedules_or_Sessions_Comment struct {
 	BaseModel
-	ScheduleID uint   `json:"schedule_id" gorm:"null:true"`
-	SessionID  uint   `json:"session_id" gorm:"null:true"`
+	ScheduleID *uint  `json:"schedule_id" gorm:"null:true"`
+	SessionID  *uint  `json:"session_id" gorm:"null:true"`
 	UserID     uint   `json:"user_id" gorm:"not null"`
 	Comment    string `json:"comment" gorm:"type:text;not null"`
 
 	// Relationships
-	Schedule Schedules         `json:"schedule" gorm:"foreignKey:ScheduleID"`
-	Session  Schedule_Sessions `json:"session" gorm:"foreignKey:SessionID"`
-	User     User              `json:"user" gorm:"foreignKey:UserID"`
+	Schedule *Schedules         `json:"schedule" gorm:"foreignKey:ScheduleID"`
+	Session  *Schedule_Sessions `json:"session" gorm:"foreignKey:SessionID"`
+	User     User               `json:"user" gorm:"foreignKey:UserID"`
 }
 
 // ScheduleParticipant model - for event/appointment participants
@@ -464,4 +464,51 @@ type NotificationPreference struct {
 
 	// Relationship
 	User User `json:"user" gorm:"foreignKey:UserID"`
+}
+
+// Book model - stores books used in courses/sessions
+type Book struct {
+	BaseModel
+	Name        string `json:"name" gorm:"size:255;not null;uniqueIndex"`
+	Author      string `json:"author" gorm:"size:255"`
+	Edition     string `json:"edition" gorm:"size:100"`
+	Language    string `json:"language" gorm:"size:50"`
+	Description string `json:"description" gorm:"type:text"`
+}
+
+// ClassProgress model - imported per-session progress logs for a group/course
+type ClassProgress struct {
+	BaseModel
+	// Provenance
+	FileName       string `json:"file_name" gorm:"size:255"`
+	FileID         string `json:"file_id" gorm:"size:255"`
+	SpreadsheetURL string `json:"spreadsheet_url" gorm:"size:500"`
+	SheetTab       string `json:"sheet_tab" gorm:"size:100"`
+
+	// Relationships
+	GroupID   *uint `json:"group_id" gorm:"index;default:null"`
+	CourseID  *uint `json:"course_id" gorm:"index;default:null"`
+	TeacherID *uint `json:"teacher_id" gorm:"index;default:null"`
+	BookID    *uint `json:"book_id" gorm:"index;default:null"`
+
+	// Session/progress info
+	Number        *int       `json:"number" gorm:"default:null"` // Session number (No)
+	LessonPlan    string     `json:"lesson_plan" gorm:"type:text"`
+	Date          *time.Time `json:"date" gorm:"default:null"`
+	Hour          *int       `json:"hour" gorm:"default:null"` // cumulative learned hours reached
+	WarmUp        string     `json:"warm_up" gorm:"type:text"`
+	Topic         string     `json:"topic" gorm:"type:text"`
+	LastPage      string     `json:"last_page" gorm:"size:100"`
+	ProgressCheck string     `json:"progress_check" gorm:"type:text"`
+	Comment       string     `json:"comment" gorm:"type:text"`
+	GoalInfo      string     `json:"goal_info" gorm:"type:text"`    // Goal + Information
+	BookNameRaw   string     `json:"book_name_raw" gorm:"size:255"` // original text from import for trace
+
+	// Group/course meta captured from import header (not normalized elsewhere)
+	Level        string `json:"level" gorm:"size:100"`
+	CoursePath   string `json:"course_path" gorm:"size:255"`
+	TargetHours  *int   `json:"target_hours" gorm:"default:null"`
+	SpecialHours *int   `json:"special_hours" gorm:"default:null"`
+	TotalHours   *int   `json:"total_hours" gorm:"default:null"`
+	BranchRaw    string `json:"branch_raw" gorm:"size:100"` // e.g., "1,3"
 }

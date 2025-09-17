@@ -38,7 +38,7 @@ type ArchivedLog struct {
 	Details    map[string]any `json:"details"`
 	IPAddress  string         `json:"ip_address"`
 	UserAgent  string         `json:"user_agent"`
-	CreatedAt  time.Time      `json:"created_at"`
+	CreatedAt  *time.Time     `json:"created_at"`
 	Username   string         `json:"username,omitempty"`
 	UserRole   string         `json:"user_role,omitempty"`
 }

@@ -24,6 +24,16 @@ services:
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - USE_SSM=${USE_SSM:-false}
+      - USE_REDIS_NOTIFICATIONS=true
+      - SKIP_MIGRATE=true
+      - PRUNE_COLUMNS=false
+      - LOG_ARCHIVE_DAYS=7d           # วันที่จะ archive (default: 7)
+      - LOG_CACHE_TTL=24h             # ระยะเวลา cache (default: 24h)
+      - LOG_LEVEL=info                # ระดับ log
+      - LOG_FILE=logs/app.log      
+      - MAX_FILE_SIZE=10485760
+      - ALLOWED_EXTENSIONS=jpg,jpeg,png,webp,gif
+
     depends_on:
       - redis
     ports:

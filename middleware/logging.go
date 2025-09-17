@@ -70,7 +70,8 @@ func LogActivity(c *fiber.Ctx, action, resource string, resourceID uint, details
 	}
 
 	// Add integrity hash for tamper detection
-	activityLog.BaseModel.CreatedAt = time.Now()
+	t := time.Now()
+	activityLog.BaseModel.CreatedAt = &t
 	integrityHash := generateIntegrityHash(activityLog)
 
 	// Enhanced details with security metadata
@@ -120,6 +121,10 @@ func LogActivity(c *fiber.Ctx, action, resource string, resourceID uint, details
 
 // generateIntegrityHash creates a hash for tamper detection
 func generateIntegrityHash(log models.ActivityLog) string {
+	createdAtStr := ""
+	if log.CreatedAt != nil {
+		createdAtStr = log.CreatedAt.Format(time.RFC3339)
+	}
 	data := fmt.Sprintf("%d:%s:%s:%d:%s:%s:%s",
 		log.UserID,
 		log.Action,
@@ -127,7 +132,7 @@ func generateIntegrityHash(log models.ActivityLog) string {
 		log.ResourceID,
 		log.IPAddress,
 		log.UserAgent,
-		log.CreatedAt.Format(time.RFC3339),
+		createdAtStr,
 	)
 	return fmt.Sprintf("%x", md5.Sum([]byte(data)))
 }

@@ -3,14 +3,15 @@ package main
 import (
 	"englishkorat_go/config"
 	"englishkorat_go/database"
+	"englishkorat_go/handlers"
 	"englishkorat_go/middleware"
 	"englishkorat_go/routes"
 	"englishkorat_go/services"
 	"englishkorat_go/services/notifications"
 	"englishkorat_go/services/websocket"
-	"englishkorat_go/handlers"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -25,6 +26,16 @@ func init() {
 
 	// Load configuration
 	config.LoadConfig()
+
+	// Log resolved important flags for debugging
+	if config.AppConfig != nil {
+		log.Printf("Startup config: AppEnv=%s, SkipMigrate=%v, PruneColumns=%v, UseSSM=%v",
+			config.AppConfig.AppEnv,
+			config.AppConfig.SkipMigrate,
+			config.AppConfig.PruneColumns,
+			strings.ToLower(os.Getenv("USE_SSM")) == "true",
+		)
+	}
 
 	// Connect to database
 	database.Connect()
@@ -122,9 +133,9 @@ func main() {
 	}
 
 	for _, r := range app.Stack() {
-    for _, route := range r {
-        log.Printf("📌 Registered route: %s %s", route.Method, route.Path)
-    }
+		for _, route := range r {
+			log.Printf("📌 Registered route: %s %s", route.Method, route.Path)
+		}
 	}
 
 	// 404 handler

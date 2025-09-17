@@ -3,7 +3,9 @@ package controllers
 import (
 	"englishkorat_go/database"
 	"englishkorat_go/models"
+	"englishkorat_go/utils"
 	"strconv"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -62,29 +64,40 @@ func (gc *GroupController) CreateGroup(c *fiber.Ctx) error {
 		})
 	}
 
-	// Preload course for response
-	if err := database.DB.Preload("Course").First(&group, group.ID).Error; err != nil {
+	// Preload course and its relations for response
+	if err := database.DB.Preload("Course").Preload("Course.Branch").Preload("Course.Category").First(&group, group.ID).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to load group details",
 		})
 	}
 
+	dto := utils.ToGroupDTO(group)
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"message": "Group created successfully",
-		"group":   group,
+		"group":   dto,
 	})
 }
 
 // GetGroups retrieves all groups with optional filters
 func (gc *GroupController) GetGroups(c *fiber.Ctx) error {
 	courseID := c.Query("course_id")
+	branchID := c.Query("branch_id")
 	status := c.Query("status")
 	paymentStatus := c.Query("payment_status")
 
-	query := database.DB.Preload("Course").Preload("Members.Student")
+	query := database.DB.Model(&models.Group{}).
+		Preload("Course").
+		Preload("Course.Branch").
+		Preload("Course.Category").
+		Preload("Members.Student")
 
 	if courseID != "" {
 		query = query.Where("course_id = ?", courseID)
+	}
+	// Filter by branch via the joined course
+	if branchID != "" {
+		// join courses to filter by branch
+		query = query.Joins("JOIN courses ON courses.id = groups.course_id").Where("courses.branch_id = ?", branchID)
 	}
 	if status != "" {
 		query = query.Where("status = ?", status)
@@ -93,15 +106,47 @@ func (gc *GroupController) GetGroups(c *fiber.Ctx) error {
 		query = query.Where("payment_status = ?", paymentStatus)
 	}
 
+	// Pagination
+	page := 1
+	perPage := 20
+	if p := c.Query("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	if pp := c.Query("per_page"); pp != "" {
+		if v, err := strconv.Atoi(pp); err == nil && v > 0 {
+			perPage = v
+		}
+	}
+	if perPage > 100 {
+		perPage = 100
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to count groups"})
+	}
+
+	offset := (page - 1) * perPage
 	var groups []models.Group
-	if err := query.Find(&groups).Error; err != nil {
+	if err := query.Limit(perPage).Offset(offset).Find(&groups).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to fetch groups",
 		})
 	}
-
+	// Map to DTOs
+	dtos := utils.ToGroupDTOs(groups)
+	totalPages := 0
+	if total > 0 {
+		totalPages = int((total + int64(perPage) - 1) / int64(perPage))
+	}
 	return c.JSON(fiber.Map{
-		"groups": groups,
+		"groups":      dtos,
+		"total":       total,
+		"page":        page,
+		"per_page":    perPage,
+		"total_pages": totalPages,
 	})
 }
 
@@ -115,14 +160,19 @@ func (gc *GroupController) GetGroup(c *fiber.Ctx) error {
 	}
 
 	var group models.Group
-	if err := database.DB.Preload("Course").Preload("Members.Student").First(&group, id).Error; err != nil {
+	if err := database.DB.
+		Preload("Course").
+		Preload("Course.Branch").
+		Preload("Course.Category").
+		Preload("Members.Student").
+		First(&group, id).Error; err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"error": "Group not found",
 		})
 	}
-
+	dto := utils.ToGroupDTO(group)
 	return c.JSON(fiber.Map{
-		"group": group,
+		"group": dto,
 	})
 }
 
@@ -176,10 +226,12 @@ func (gc *GroupController) AddMemberToGroup(c *fiber.Ctx) error {
 	}
 
 	// Add member to group
+	now := time.Now()
 	member := models.GroupMember{
 		GroupID:       uint(groupID),
 		StudentID:     req.StudentID,
 		PaymentStatus: req.PaymentStatus,
+		JoinedAt:      &now,
 		Status:        "active",
 	}
 
@@ -201,9 +253,16 @@ func (gc *GroupController) AddMemberToGroup(c *fiber.Ctx) error {
 		database.DB.Model(&group).Update("status", "active")
 	}
 
+	// Reload member with student for DTO
+	if err := database.DB.Preload("Student").First(&member, member.ID).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to load member details",
+		})
+	}
+	memberDTO := utils.ToGroupMemberDTO(member)
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"message": "Member added to group successfully",
-		"member":  member,
+		"member":  memberDTO,
 	})
 }
 
