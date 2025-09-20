@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"log"
 	"os"
+	"time"                     // ✅ เพิ่มอันนี้
+    "englishkorat_go/models"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/line/line-bot-sdk-go/linebot"
@@ -59,36 +61,62 @@ func (h *LineWebhookHandler) Handle(c *fiber.Ctx) error {
 
 	// ✅ ตอบกลับ 200 ก่อน เพื่อให้ LINE Verify ผ่าน
 	go func(body []byte) {
-		var webhook struct {
-			Events []*linebot.Event `json:"events"`
-		}
-		if err := json.Unmarshal(body, &webhook); err != nil {
-			log.Printf("❌ Failed to parse event JSON: %v", err)
-			return
-		}
+    var webhook struct {
+        Events []*linebot.Event `json:"events"`
+    }
+    if err := json.Unmarshal(body, &webhook); err != nil {
+        log.Printf("❌ Failed to parse event JSON: %v", err)
+        return
+    }
 
-		for _, event := range webhook.Events {
-			log.Printf("📌 Event: %s, Source: %+v\n", event.Type, event.Source)
+    for _, event := range webhook.Events {
+        if event.Type != linebot.EventTypeJoin {
+            continue
+        }
 
-			switch event.Type {
-			case linebot.EventTypeJoin:
-				groupID := event.Source.GroupID
-				if groupID != "" {
-					groupSummary, err := h.Bot.GetGroupSummary(groupID).Do()
-					if err == nil {
-						log.Printf("✅ Bot joined group: %s (%s)", groupSummary.GroupName, groupID)
-						// TODO: บันทึก groupName + groupID ลง DB
-					}
-				}
-			case linebot.EventTypeMessage:
-				if message, ok := event.Message.(*linebot.TextMessage); ok {
-					log.Printf("💬 Received text message: %s", message.Text)
-				}
-			default:
-				log.Printf("ℹ️ Skipped event type: %s", event.Type)
-			}
-		}
+        groupID := event.Source.GroupID
+        if groupID == "" {
+            log.Println("⚠️ Join event ไม่พบ groupID")
+            continue
+        }
+
+        groupSummary, err := h.Bot.GetGroupSummary(groupID).Do()
+        if err != nil {
+            log.Printf("❌ Failed to get group summary: %v", err)
+            continue
+        }
+
+        log.Printf("✅ Bot joined group: %s (%s)", groupSummary.GroupName, groupID)
+
+        var existing models.LineGroup
+        result := h.DB.Where("group_id = ?", groupID).First(&existing)
+
+        if result.Error == nil {
+            existing.GroupName = groupSummary.GroupName
+            existing.LastJoinedAt = time.Now()
+            if err := h.DB.Save(&existing).Error; err != nil {
+                log.Printf("❌ Failed to update LineGroup in DB: %v", err)
+            } else {
+                log.Printf("♻️ Updated LineGroup in DB: %s (%s) at %s",
+                    groupSummary.GroupName, groupID, existing.LastJoinedAt.Format(time.RFC3339))
+            }
+        } else {
+            lineGroup := models.LineGroup{
+                GroupName:    groupSummary.GroupName,
+                GroupID:      groupID,
+                LastJoinedAt: time.Now(),
+            }
+            if err := h.DB.Create(&lineGroup).Error; err != nil {
+                log.Printf("❌ Failed to save LineGroup to DB: %v", err)
+            } else {
+                log.Printf("💾 Saved LineGroup to DB: %s (%s) at %s",
+                    groupSummary.GroupName, groupID, lineGroup.LastJoinedAt.Format(time.RFC3339))
+            }
+        }
+    }
 	}(c.Body())
+
+
 
 	return c.SendStatus(fiber.StatusOK)
 }
