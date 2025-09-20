@@ -217,9 +217,9 @@ type Student_Group struct {
 
 type LineGroup struct {
 	BaseModel
-	ID        uint   `json:"id" gorm:"primaryKey"`
-	GroupName string `json:"group_name" gorm:"unique;not null"`
-	Token     string `json:"token" gorm:"size:255;not null"` // LINE Notify token ของกลุ่มนั้น
+	GroupName  string    `json:"group_name" gorm:"unique;not null"`
+    GroupID      string    `json:"group_id" gorm:"unique;not null"`
+	LastJoinedAt time.Time `json:"last_joined_at" gorm:"not null"`
 }
 
 type User_inCourse struct {
