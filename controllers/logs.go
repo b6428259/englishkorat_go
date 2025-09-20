@@ -28,7 +28,7 @@ type LogResponse struct {
 	Details    map[string]interface{} `json:"details"`
 	IPAddress  string                 `json:"ip_address"`
 	UserAgent  string                 `json:"user_agent"`
-	CreatedAt  time.Time              `json:"created_at"`
+	CreatedAt  *time.Time             `json:"created_at"`
 	User       *UserBasicInfo         `json:"user,omitempty"`
 }
 

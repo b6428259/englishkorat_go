@@ -879,7 +879,6 @@ func (sc *StudentController) NewPublicRegisterStudent(c *fiber.Ctx) error {
 				user = models.User{
 					Username: username,
 					Password: hashedPassword,
-					Email:    "",
 					Phone:    phoneRaw,
 					LineID:   username,
 					Role:     "student",
@@ -887,7 +886,10 @@ func (sc *StudentController) NewPublicRegisterStudent(c *fiber.Ctx) error {
 					Status:   "active",
 				}
 				if req.ContactInformation.Email != nil {
-					user.Email = strings.TrimSpace(*req.ContactInformation.Email)
+					v := strings.TrimSpace(*req.ContactInformation.Email)
+					if v != "" {
+						user.Email = &v
+					}
 				}
 
 				if err := tx.Create(&user).Error; err != nil {

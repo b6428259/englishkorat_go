@@ -109,7 +109,10 @@ func (ns *NotificationScheduler) sendUpcomingClassNotification(session models.Sc
 	}
 
 	// กันยิงซ้ำ: ตรวจจากข้อความภาษาอังกฤษที่เราจะส่งจริง ๆ
-	startHHMM := session.Start_time.Format("15:04")
+	startHHMM := ""
+	if session.Start_time != nil {
+		startHHMM = session.Start_time.Format("15:04")
+	}
 	if ns.hasNotificationBeenSent(schedule.ScheduleName, timeLabel, startHHMM) {
 		return
 	}
@@ -170,12 +173,16 @@ func (ns *NotificationScheduler) sendUpcomingClassNotification(session models.Sc
 			}
 		}
 
+		startLabel := ""
+		if session.Start_time != nil {
+			startLabel = session.Start_time.Format("15:04")
+		}
 		title := "Upcoming Class"
 		titleTh := "เรียนจะเริ่มเร็วๆ นี้"
 		msg := fmt.Sprintf("Your class '%s' will start in %s at %s",
-			schedule.ScheduleName, timeLabel, session.Start_time.Format("15:04"))
+			schedule.ScheduleName, timeLabel, startLabel)
 		msgTh := fmt.Sprintf("คลาส '%s' ของคุณจะเริ่มในอีก %s เวลา %s",
-			schedule.ScheduleName, ns.translateTimeLabel(timeLabel), session.Start_time.Format("15:04"))
+			schedule.ScheduleName, ns.translateTimeLabel(timeLabel), startLabel)
 
 		q := notifsvc.QueuedForController(title, titleTh, msg, msgTh, "info")
 		if err := ns.ns.EnqueueOrCreate(userIDs, q); err != nil {
@@ -334,12 +341,16 @@ func (ns *NotificationScheduler) sendMissedSessionNotification(session models.Sc
 		userIDs = append(userIDs, a.ID)
 	}
 
+	dateLabel := ""
+	if session.Session_date != nil {
+		dateLabel = session.Session_date.Format("2006-01-02")
+	}
 	title := "Missed Session Alert"
 	titleTh := "แจ้งเตือน Session พลาด"
 	msg := fmt.Sprintf("Session '%s' on %s was missed (no-show)",
-		session.Schedule.ScheduleName, session.Session_date.Format("2006-01-02"))
+		session.Schedule.ScheduleName, dateLabel)
 	msgTh := fmt.Sprintf("Session '%s' วันที่ %s พลาด (no-show)",
-		session.Schedule.ScheduleName, session.Session_date.Format("2006-01-02"))
+		session.Schedule.ScheduleName, dateLabel)
 
 	q := notifsvc.QueuedForController(title, titleTh, msg, msgTh, "warning")
 	if err := ns.ns.EnqueueOrCreate(userIDs, q); err != nil {

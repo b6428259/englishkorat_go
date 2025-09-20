@@ -6,7 +6,7 @@ import (
 	"englishkorat_go/models"
 	"fmt"
 	"log"
-	"os"
+	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -67,9 +67,14 @@ func connectDatabase() {
 	sqlDB.SetMaxOpenConns(50)
 	sqlDB.SetConnMaxLifetime(55 * time.Minute)
 
-	// Auto migrate (can be skipped with SKIP_MIGRATE=true)
-	if skip := os.Getenv("SKIP_MIGRATE"); skip == "false" {
-		log.Println("SKIP_MIGRATE=true; skipping automatic migrations")
+	// Auto migrate (can be skipped via config.SkipMigrate)
+	skip := false
+	if config.AppConfig != nil {
+		skip = config.AppConfig.SkipMigrate
+	}
+	log.Println("Running automatic migrations... SkipMigrate=", skip)
+	if skip {
+		log.Println("SkipMigrate=true; skipping automatic migrations")
 	} else {
 		AutoMigrate()
 	}
@@ -111,6 +116,8 @@ func AutoMigrate() {
 		&models.SessionConfirmation{},
 		&models.NotificationPreference{},
 		&models.LineGroup{},
+		&models.Book{},
+		&models.ClassProgress{},
 	}
 
 	err := DB.AutoMigrate(modelsList...)
@@ -121,8 +128,15 @@ func AutoMigrate() {
 
 	log.Println("Database migration completed successfully")
 
+	// Post-migration: ensure users.email is NULLable (not empty string) to avoid unique '' collisions
+	// Some older schemas might have `email` as NOT NULL with default '' which breaks uniqueness when blank.
+	// Try to alter column to be NULLABLE with DEFAULT NULL in a best-effort manner.
+	if err := ensureUsersEmailNullable(DB); err != nil {
+		log.Printf("Warning: could not ensure users.email is nullable: %v", err)
+	}
+
 	// Optional: prune extra columns not defined in models (dangerous - gated by env)
-	if os.Getenv("PRUNE_COLUMNS") == "true" {
+	if config.AppConfig != nil && config.AppConfig.PruneColumns {
 		log.Println("PRUNE_COLUMNS=true; starting schema prune for extra columns")
 		for _, m := range modelsList {
 			if err := pruneExtraColumns(DB, m); err != nil {
@@ -131,6 +145,29 @@ func AutoMigrate() {
 		}
 		log.Println("Schema prune completed")
 	}
+}
+
+// ensureUsersEmailNullable makes sure the users.email column is nullable with default NULL.
+// This avoids MySQL unique index collisions on empty strings when email is not provided.
+func ensureUsersEmailNullable(db *gorm.DB) error {
+	// Inspect column definition; if NOT NULL or default '' then alter.
+	type colInfo struct {
+		IS_NULLABLE    string
+		COLUMN_DEFAULT *string
+	}
+	var info colInfo
+	// Query information_schema for current column definition
+	// Using DATABASE() for current schema
+	row := db.Raw(`SELECT IS_NULLABLE, COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'email'`).Row()
+	if err := row.Scan(&info.IS_NULLABLE, &info.COLUMN_DEFAULT); err != nil {
+		return err
+	}
+	// If already NULLable and default is NULL, nothing to do
+	if strings.EqualFold(info.IS_NULLABLE, "YES") && (info.COLUMN_DEFAULT == nil) {
+		return nil
+	}
+	// Attempt to alter column
+	return db.Exec("ALTER TABLE `users` MODIFY COLUMN `email` varchar(255) NULL DEFAULT NULL").Error
 }
 
 // pruneExtraColumns drops columns that exist in the DB table but not in the model definition.
@@ -156,19 +193,59 @@ func pruneExtraColumns(db *gorm.DB, model interface{}) error {
 		return fmt.Errorf("list columns: %w", err)
 	}
 
+	// Verbose logging for debug: list model columns and DB columns
+	log.Printf("Prune debug for table %s: model columns=%v", tableName, keysFromMap(modelCols))
+	dbColNames := []string{}
+
 	// Find extras
 	for _, c := range cols {
 		name := c.Name()
+		dbColNames = append(dbColNames, name)
 		if _, ok := modelCols[name]; !ok {
 			// Skip GORM's soft delete column if model embeds gorm.DeletedAt (DB name may vary)
 			// We already included DeletedAt via BaseModel. If not present in DBNames, this means model truly lacks it.
 			log.Printf("Pruning extra column %s.%s", tableName, name)
+
+			// Before dropping the column, drop any foreign key constraints that reference it.
+			// MySQL lists constraints in information_schema.KEY_COLUMN_USAGE where REFERENCED_TABLE_NAME is not null.
+			rows, rerr := db.Raw("SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? AND REFERENCED_TABLE_NAME IS NOT NULL", tableName, name).Rows()
+			if rerr != nil {
+				log.Printf("Failed to query foreign keys for %s.%s: %v", tableName, name, rerr)
+			} else {
+				defer rows.Close()
+				for rows.Next() {
+					var constraintName string
+					if serr := rows.Scan(&constraintName); serr != nil {
+						log.Printf("Failed to scan constraint name for %s.%s: %v", tableName, name, serr)
+						continue
+					}
+					log.Printf("Found FK constraint %s on %s.%s, attempting to drop it", constraintName, tableName, name)
+					if execErr := db.Exec(fmt.Sprintf("ALTER TABLE `%s` DROP FOREIGN KEY `%s`", tableName, constraintName)).Error; execErr != nil {
+						log.Printf("Failed to drop FK %s on %s: %v", constraintName, tableName, execErr)
+					} else {
+						log.Printf("Dropped FK %s on %s successfully", constraintName, tableName)
+					}
+				}
+			}
+
 			if err := db.Migrator().DropColumn(model, name); err != nil {
 				log.Printf("Failed to drop column %s.%s: %v", tableName, name, err)
+			} else {
+				log.Printf("Dropped column %s.%s successfully", tableName, name)
 			}
 		}
 	}
+	log.Printf("Prune debug for table %s: db columns=%v", tableName, dbColNames)
 	return nil
+}
+
+// keysFromMap returns sorted keys of a string->struct{} map (unsorted is fine here)
+func keysFromMap(m map[string]struct{}) []string {
+	ks := make([]string, 0, len(m))
+	for k := range m {
+		ks = append(ks, k)
+	}
+	return ks
 }
 
 // connectRedis initializes Redis connection

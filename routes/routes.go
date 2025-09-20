@@ -24,11 +24,10 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	logController := &controllers.LogController{}
 	scheduleController := &controllers.ScheduleController{}
 	groupController := &controllers.GroupController{}
+	classProgressImportController := &controllers.ClassProgressImportController{}
 	wsController := controllers.NewWebSocketController(wsHub)
 
-
 	// localhost:3000/api/auth/login
-
 
 	// API group
 	api := app.Group("/api")
@@ -47,6 +46,12 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	// Also expose at /api/students/student-register (no auth)
 	api.Post("/students/student-register", studentController.PublicRegisterStudent)
 	api.Post("/students/new-register", studentController.NewPublicRegisterStudent) // New structured registration endpoint
+
+	// Also expose public courses directly under /api/courses for unauthenticated access
+	// This ensures requests to /api/courses/ (with trailing slash) are handled.
+	api.Get("/courses", courseController.GetCourses)
+	api.Get("/courses/:id", courseController.GetCourse)
+	api.Get("/courses/branch/:branch_id", courseController.GetCoursesByBranch)
 
 	// Authentication routes (no middleware)
 	auth := api.Group("/auth")
@@ -166,9 +171,11 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	schedules.Get("/teacher", middleware.RequireTeacherOrAbove(), scheduleController.GetTeachersSchedules)
 	schedules.Get("/my", scheduleController.GetMySchedules)             // ดู schedule ของตัวเอง
 	schedules.Patch("/:id/confirm", scheduleController.ConfirmSchedule) // ยืนยัน schedule
+	schedules.Patch("/sessions/:id/confirm", scheduleController.ConfirmSession)
 
 	// Session management
 	schedules.Get("/:id/sessions", scheduleController.GetScheduleSessions)          // ดู sessions ของ schedule
+	schedules.Get("/sessions/:id", scheduleController.GetSession)                   // ดูรายละเอียดของ session
 	schedules.Patch("/sessions/:id/status", scheduleController.UpdateSessionStatus) // อัพเดทสถานะ session
 	schedules.Post("/sessions/makeup", scheduleController.CreateMakeupSession)      // สร้าง makeup session
 
@@ -187,6 +194,11 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	groups.Post("/:id/members", middleware.RequireOwnerOrAdmin(), groupController.AddMemberToGroup)
 	groups.Delete("/:id/members/:student_id", middleware.RequireOwnerOrAdmin(), groupController.RemoveMemberFromGroup)
 	groups.Patch("/:id/payment-status", middleware.RequireOwnerOrAdmin(), groupController.UpdateGroupPaymentStatus)
+
+	// Import routes
+	imports := protected.Group("/import", middleware.RequireOwnerOrAdmin())
+	imports.Post("/class-progress", classProgressImportController.Import)
+	imports.Post("/class-progress/undo", classProgressImportController.Undo)
 
 	// WebSocket routes
 	ws := protected.Group("/ws")

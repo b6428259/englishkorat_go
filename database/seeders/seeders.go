@@ -32,9 +32,12 @@ func SeedBranches() {
 		return
 	}
 
+	t1 := time.Date(2025, 8, 15, 2, 28, 56, 0, time.UTC)
+	t2 := time.Date(2025, 8, 15, 2, 28, 56, 0, time.UTC)
+	t3 := time.Date(2025, 8, 15, 2, 28, 56, 0, time.UTC)
 	branches := []models.Branch{
 		{
-			BaseModel: models.BaseModel{ID: 1, CreatedAt: time.Date(2025, 8, 15, 2, 28, 56, 0, time.UTC)},
+			BaseModel: models.BaseModel{ID: 1, CreatedAt: &t1},
 			NameEn:    "Branch 1 The Mall Branch",
 			NameTh:    "สาขา 1 เดอะมอลล์โคราช",
 			Code:      "MALL",
@@ -44,7 +47,7 @@ func SeedBranches() {
 			Active:    true,
 		},
 		{
-			BaseModel: models.BaseModel{ID: 2, CreatedAt: time.Date(2025, 8, 15, 2, 28, 56, 0, time.UTC)},
+			BaseModel: models.BaseModel{ID: 2, CreatedAt: &t2},
 			NameEn:    "Branch 2 Technology Branch",
 			NameTh:    "สาขา 2 มหาวิทยาลัยเทคโนโลยีราชมงคลอีสาน",
 			Code:      "RMUTI",
@@ -54,7 +57,7 @@ func SeedBranches() {
 			Active:    true,
 		},
 		{
-			BaseModel: models.BaseModel{ID: 3, CreatedAt: time.Date(2025, 8, 15, 2, 28, 56, 0, time.UTC)},
+			BaseModel: models.BaseModel{ID: 3, CreatedAt: &t3},
 			NameEn:    "Online Branch",
 			NameTh:    "แบบออนไลน์",
 			Code:      "ONLINE",
@@ -86,12 +89,22 @@ func SeedUsers() {
 	// Hash the default password
 	hashedPassword, _ := utils.HashPassword("password123")
 
+	u1 := time.Date(2025, 8, 15, 2, 28, 56, 0, time.UTC)
+	u2 := time.Date(2025, 8, 15, 2, 28, 56, 0, time.UTC)
+	u3 := time.Date(2025, 8, 15, 2, 28, 56, 0, time.UTC)
+	u8 := time.Date(2025, 8, 15, 2, 28, 56, 0, time.UTC)
+	// Prepare email pointers
+	adminEmail := "admin@englishkorat.com"
+	ownerEmail := "owner@englishkorat.com"
+	aliceEmail := "alice.wilson@gmail.com"
+	johnEmail := "john.smith@englishkorat.com"
+
 	users := []models.User{
 		{
-			BaseModel: models.BaseModel{ID: 1, CreatedAt: time.Date(2025, 8, 15, 2, 28, 56, 0, time.UTC)},
+			BaseModel: models.BaseModel{ID: 1, CreatedAt: &u1},
 			Username:  "admin",
 			Password:  hashedPassword,
-			Email:     "admin@englishkorat.com",
+			Email:     &adminEmail,
 			Phone:     "0812345678",
 			LineID:    "admin_ekls",
 			Role:      "admin",
@@ -100,10 +113,10 @@ func SeedUsers() {
 			Avatar:    "avatars/1/2025/08/21/635e0f1149d42546.webp",
 		},
 		{
-			BaseModel: models.BaseModel{ID: 2, CreatedAt: time.Date(2025, 8, 15, 2, 28, 56, 0, time.UTC)},
+			BaseModel: models.BaseModel{ID: 2, CreatedAt: &u2},
 			Username:  "owner",
 			Password:  hashedPassword,
-			Email:     "owner@englishkorat.com",
+			Email:     &ownerEmail,
 			Phone:     "0812345679",
 			LineID:    "owner_ekls",
 			Role:      "owner",
@@ -112,10 +125,10 @@ func SeedUsers() {
 			Avatar:    "avatars/2/2025/08/20/c424a3c7cc93c92b.webp",
 		},
 		{
-			BaseModel: models.BaseModel{ID: 3, CreatedAt: time.Date(2025, 8, 15, 2, 28, 56, 0, time.UTC)},
+			BaseModel: models.BaseModel{ID: 3, CreatedAt: &u3},
 			Username:  "alice_w",
 			Password:  hashedPassword,
-			Email:     "alice.wilson@gmail.com",
+			Email:     &aliceEmail,
 			Phone:     "0891234567",
 			LineID:    "alice_ekls",
 			Role:      "student",
@@ -123,10 +136,10 @@ func SeedUsers() {
 			Status:    "active",
 		},
 		{
-			BaseModel: models.BaseModel{ID: 8, CreatedAt: time.Date(2025, 8, 15, 2, 28, 56, 0, time.UTC)},
+			BaseModel: models.BaseModel{ID: 8, CreatedAt: &u8},
 			Username:  "teacher_john",
 			Password:  hashedPassword,
-			Email:     "john.smith@englishkorat.com",
+			Email:     &johnEmail,
 			Phone:     "0896789012",
 			LineID:    "john_teacher",
 			Role:      "teacher",
@@ -161,9 +174,11 @@ func SeedStudents() {
 	}
 	scheduleJSON, _ := json.Marshal(availabilitySchedule)
 
+	s1 := time.Date(2025, 8, 15, 2, 28, 57, 0, time.UTC)
+	varLastStatus := time.Time{}
 	students := []models.Student{
 		{
-			BaseModel:            models.BaseModel{ID: 1, CreatedAt: time.Date(2025, 8, 15, 2, 28, 57, 0, time.UTC)},
+			BaseModel:            models.BaseModel{ID: 1, CreatedAt: &s1},
 			UserID:               func(u uint) *uint { return &u }(3),
 			FirstName:            "อลิซ",
 			LastName:             "วิลสัน",
@@ -183,7 +198,7 @@ func SeedStudents() {
 			RegistrationStatus:   "finding_group",
 			DepositAmount:        3000,
 			PaymentStatus:        "partial",
-			LastStatusUpdate:     &time.Time{},
+			LastStatusUpdate:     &varLastStatus,
 			DaysWaiting:          28,
 		},
 	}
@@ -206,9 +221,11 @@ func SeedTeachers() {
 		return
 	}
 
+	th1 := time.Date(2025, 8, 20, 6, 15, 59, 0, time.UTC)
+	th2 := time.Date(2025, 8, 20, 6, 15, 59, 0, time.UTC)
 	teachers := []models.Teacher{
 		{
-			BaseModel:       models.BaseModel{ID: 1, CreatedAt: time.Date(2025, 8, 20, 6, 15, 59, 0, time.UTC)},
+			BaseModel:       models.BaseModel{ID: 1, CreatedAt: &th1},
 			UserID:          1,
 			FirstNameEn:     "Admin",
 			FirstNameTh:     "ผู้ดูแลระบบ",
@@ -222,7 +239,7 @@ func SeedTeachers() {
 			BranchID:        1,
 		},
 		{
-			BaseModel:       models.BaseModel{ID: 2, CreatedAt: time.Date(2025, 8, 20, 6, 15, 59, 0, time.UTC)},
+			BaseModel:       models.BaseModel{ID: 2, CreatedAt: &th2},
 			UserID:          8,
 			FirstNameEn:     "John",
 			FirstNameTh:     "จอห์น",
@@ -261,9 +278,12 @@ func SeedRooms() {
 	equipment2, _ := json.Marshal([]string{"whiteboard", "speakers", "air_conditioning"})
 	equipment3, _ := json.Marshal([]string{"zoom_pro", "breakout_rooms", "recording"})
 
+	r1 := time.Date(2025, 8, 15, 2, 28, 57, 0, time.UTC)
+	r2 := time.Date(2025, 8, 15, 2, 28, 57, 0, time.UTC)
+	r6 := time.Date(2025, 8, 15, 2, 28, 57, 0, time.UTC)
 	rooms := []models.Room{
 		{
-			BaseModel: models.BaseModel{ID: 1, CreatedAt: time.Date(2025, 8, 15, 2, 28, 57, 0, time.UTC)},
+			BaseModel: models.BaseModel{ID: 1, CreatedAt: &r1},
 			BranchID:  1,
 			RoomName:  "Room A1",
 			Capacity:  8,
@@ -271,7 +291,7 @@ func SeedRooms() {
 			Status:    "available",
 		},
 		{
-			BaseModel: models.BaseModel{ID: 2, CreatedAt: time.Date(2025, 8, 15, 2, 28, 57, 0, time.UTC)},
+			BaseModel: models.BaseModel{ID: 2, CreatedAt: &r2},
 			BranchID:  1,
 			RoomName:  "Room A2",
 			Capacity:  6,
@@ -279,7 +299,7 @@ func SeedRooms() {
 			Status:    "available",
 		},
 		{
-			BaseModel: models.BaseModel{ID: 6, CreatedAt: time.Date(2025, 8, 15, 2, 28, 57, 0, time.UTC)},
+			BaseModel: models.BaseModel{ID: 6, CreatedAt: &r6},
 			BranchID:  3,
 			RoomName:  "Virtual Room 1",
 			Capacity:  20,
@@ -306,38 +326,41 @@ func SeedCourses() {
 		return
 	}
 
+	c47 := time.Date(2025, 8, 15, 2, 28, 58, 0, time.UTC)
+	c57 := time.Date(2025, 8, 15, 2, 28, 58, 0, time.UTC)
+	c72 := time.Date(2025, 8, 19, 13, 49, 32, 0, time.UTC)
 	courses := []models.Course{
 		{
-			BaseModel:   models.BaseModel{ID: 47, CreatedAt: time.Date(2025, 8, 15, 2, 28, 58, 0, time.UTC)},
+			BaseModel:   models.BaseModel{ID: 47, CreatedAt: &c47},
 			Name:        "TOEIC Foundation",
 			Code:        "TECH-TOEIC-FOUND",
 			CourseType:  "toeic_prep",
 			BranchID:    2,
 			Description: "TOEIC preparation foundation",
 			Status:      "active",
-			CategoryID:  5,
+			CategoryID:  func(u uint) *uint { return &u }(5),
 			Level:       "Foundation",
 		},
 		{
-			BaseModel:   models.BaseModel{ID: 57, CreatedAt: time.Date(2025, 8, 15, 2, 28, 58, 0, time.UTC)},
+			BaseModel:   models.BaseModel{ID: 57, CreatedAt: &c57},
 			Name:        "Online Kids Conversation",
 			Code:        "ONLINE-CONV-KIDS",
 			CourseType:  "conversation_kids",
 			BranchID:    3,
 			Description: "Online conversation for kids",
 			Status:      "active",
-			CategoryID:  1,
+			CategoryID:  func(u uint) *uint { return &u }(1),
 			Level:       "Kids",
 		},
 		{
-			BaseModel:   models.BaseModel{ID: 72, CreatedAt: time.Date(2025, 8, 19, 13, 49, 32, 0, time.UTC)},
+			BaseModel:   models.BaseModel{ID: 72, CreatedAt: &c72},
 			Name:        "Contact Admin - เพื่อหาคอร์สที่เหมาะสม",
 			Code:        "CONTACT",
 			CourseType:  "",
 			BranchID:    3,
 			Description: "",
 			Status:      "active",
-			CategoryID:  8,
+			CategoryID:  func(u uint) *uint { return &u }(8),
 			Level:       "AM",
 		},
 	}

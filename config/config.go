@@ -50,6 +50,8 @@ type Config struct {
 
 	// Feature Toggles
 	UseRedisNotifications bool
+	SkipMigrate          bool
+	PruneColumns         bool
 }
 
 func (c *Config) GetDSN() string {
@@ -157,6 +159,8 @@ func LoadConfig() {
 		LogFile:  getVal("LOG_FILE", "logs/app.log"),
 
 		UseRedisNotifications: strings.ToLower(getVal("USE_REDIS_NOTIFICATIONS", "false")) == "true",
+		SkipMigrate:          strings.ToLower(getVal("SKIP_MIGRATE", "false")) == "true",
+		PruneColumns:         strings.ToLower(getVal("PRUNE_COLUMNS", "true")) == "true",
 	}
 
 	validateConfig(AppConfig, useSSM)

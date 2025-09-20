@@ -4,6 +4,7 @@ import (
 	"englishkorat_go/database"
 	"englishkorat_go/middleware"
 	"englishkorat_go/models"
+	"englishkorat_go/utils"
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"
@@ -38,18 +39,54 @@ func (cc *CourseController) GetCourses(c *fiber.Ctx) error {
 	}
 
 	// Load relationships
-	query = query.Preload("Branch")
+	query = query.Preload("Branch").Preload("Category")
 
-	// Execute query
-	if err := query.Find(&courses).Error; err != nil {
+	// Pagination: page & per_page
+	page := 1
+	perPage := 20
+	if p := c.Query("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	if pp := c.Query("per_page"); pp != "" {
+		if v, err := strconv.Atoi(pp); err == nil && v > 0 {
+			perPage = v
+		}
+	}
+	// cap perPage to prevent abuse
+	if perPage > 100 {
+		perPage = 100
+	}
+
+	// Get total count
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to count courses"})
+	}
+
+	// Apply limit/offset and execute
+	offset := (page - 1) * perPage
+	if err := query.Limit(perPage).Offset(offset).Find(&courses).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to fetch courses",
 		})
 	}
 
+	// Normalize response using DTOs
+	coursesDTO := utils.ToCourseDTOs(courses)
+
+	totalPages := 0
+	if total > 0 {
+		totalPages = int((total + int64(perPage) - 1) / int64(perPage))
+	}
+
 	return c.JSON(fiber.Map{
-		"courses": courses,
-		"total":   len(courses),
+		"courses":     coursesDTO,
+		"total":       total,
+		"page":        page,
+		"per_page":    perPage,
+		"total_pages": totalPages,
 	})
 }
 
@@ -63,14 +100,15 @@ func (cc *CourseController) GetCourse(c *fiber.Ctx) error {
 	}
 
 	var course models.Course
-	if err := database.DB.Preload("Branch").First(&course, uint(id)).Error; err != nil {
+	if err := database.DB.Preload("Branch").Preload("Category").First(&course, uint(id)).Error; err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"error": "Course not found",
 		})
 	}
 
+	courseDTO := utils.ToCourseDTO(course)
 	return c.JSON(fiber.Map{
-		"course": course,
+		"course": courseDTO,
 	})
 }
 
@@ -113,7 +151,7 @@ func (cc *CourseController) CreateCourse(c *fiber.Ctx) error {
 	}
 
 	// Load relationships
-	database.DB.Preload("Branch").First(&course, course.ID)
+	database.DB.Preload("Branch").Preload("Category").First(&course, course.ID)
 
 	// Log activity
 	middleware.LogActivity(c, "CREATE", "courses", course.ID, course)
@@ -168,7 +206,7 @@ func (cc *CourseController) UpdateCourse(c *fiber.Ctx) error {
 	}
 
 	// Load relationships
-	database.DB.Preload("Branch").First(&course, course.ID)
+	database.DB.Preload("Branch").Preload("Category").First(&course, course.ID)
 
 	// Log activity
 	middleware.LogActivity(c, "UPDATE", "courses", course.ID, fiber.Map{
@@ -222,16 +260,50 @@ func (cc *CourseController) GetCoursesByBranch(c *fiber.Ctx) error {
 		})
 	}
 
+	// Base query for branch
+	query := database.DB.Model(&models.Course{}).Where("branch_id = ? AND status = ?", uint(branchID), "active").Preload("Branch").Preload("Category")
+
+	// Pagination: page & per_page
+	page := 1
+	perPage := 20
+	if p := c.Query("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	if pp := c.Query("per_page"); pp != "" {
+		if v, err := strconv.Atoi(pp); err == nil && v > 0 {
+			perPage = v
+		}
+	}
+	if perPage > 100 {
+		perPage = 100
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to count courses"})
+	}
+
+	offset := (page - 1) * perPage
 	var courses []models.Course
-	if err := database.DB.Where("branch_id = ? AND status = ?", uint(branchID), "active").
-		Preload("Branch").Find(&courses).Error; err != nil {
+	if err := query.Limit(perPage).Offset(offset).Find(&courses).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to fetch courses",
 		})
 	}
 
+	coursesDTO := utils.ToCourseDTOs(courses)
+	totalPages := 0
+	if total > 0 {
+		totalPages = int((total + int64(perPage) - 1) / int64(perPage))
+	}
+
 	return c.JSON(fiber.Map{
-		"courses": courses,
-		"total":   len(courses),
+		"courses":     coursesDTO,
+		"total":       total,
+		"page":        page,
+		"per_page":    perPage,
+		"total_pages": totalPages,
 	})
 }

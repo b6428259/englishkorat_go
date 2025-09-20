@@ -7,6 +7,7 @@ import (
 	"englishkorat_go/storage"
 	"englishkorat_go/utils"
 	"strconv"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -127,12 +128,15 @@ func (uc *UserController) CreateUser(c *fiber.Ctx) error {
 	user := models.User{
 		Username: req.Username,
 		Password: hashedPassword,
-		Email:    req.Email,
 		Phone:    req.Phone,
 		LineID:   req.LineID,
 		Role:     req.Role,
 		BranchID: req.BranchID,
 		Status:   "active",
+	}
+	if strings.TrimSpace(req.Email) != "" {
+		email := strings.TrimSpace(req.Email)
+		user.Email = &email
 	}
 
 	if err := database.DB.Create(&user).Error; err != nil {

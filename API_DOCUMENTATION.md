@@ -50,6 +50,38 @@ Use the PowerShell script for development with EC2:
 http://localhost:3000/api
 ```
 
+### Import Class Progress
+
+- Method: POST
+- Path: `/api/import/class-progress`
+- Auth: JWT (Owner/Admin)
+- Content-Type: `multipart/form-data`
+- Form fields:
+  - `file`: CSV or XLSX containing columns like: `FileName, FileId, SpreadsheetURL, SheetTab, Student1..4, StudentEN1..4, Level, CoursePath, TargetHours, SpeacialHours, TotalHour, Branch, No, LessonPlan, Date, Hour, WarmUp, Topic, LastPage, Teacher, Progress check, Comment, Goal + Infomation, Book`
+
+Behavior:
+- Creates or finds Course by `CoursePath` (fallback to `Level`) if not exists.
+- Creates or finds Group named by `FileName/Level` (fallback to joined student names) if not exists, linked to the course.
+- For each Student column pair (TH/EN), creates User if not exists with username = Thai nickname if available else English; default password = `1424123` (hashed), role = `student`.
+- Creates Student profile if not exists and adds to the Group.
+- Maps Teacher by nickname (Thai/English) if found; otherwise leaves null.
+- Creates Book record by name if not exists and links it to the progress entry.
+- Stores each row as a Class Progress record with session info.
+
+Response:
+```
+{
+  "success": true,
+  "created": 21,
+  "skipped": 2,
+  "errors": ["row 12: ..."]
+}
+```
+
+Notes:
+- Date supports formats `DD/MM/YY`, `DD/MM/YYYY`, `YYYY-MM-DD`.
+- Branch mapping takes the first number in `Branch` (e.g., "1,3"). If not present, defaults to Online branch (id=3).
+
 ### Public Endpoints (No Authentication Required)
 
 #### Get All Courses
