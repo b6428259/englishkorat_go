@@ -49,6 +49,9 @@ func init() {
 	// ✅ Start Notification Scheduler
 	notificationScheduler := services.NewNotificationScheduler()
 	go notificationScheduler.StartScheduler()
+	// ✅ Start Daily 10:00 LINE Group Reminder
+	go notificationScheduler.StartDailyScheduler()
+
 
 	log.Printf("🔍 LINE_CHANNEL_SECRET length: %d", len(os.Getenv("LINE_CHANNEL_SECRET")))
 	log.Printf("🔍 LINE_CHANNEL_ACCESS_TOKEN length: %d", len(os.Getenv("LINE_CHANNEL_ACCESS_TOKEN")))

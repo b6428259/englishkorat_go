@@ -7,8 +7,9 @@ import (
 	"encoding/json"
 	"log"
 	"os"
-	"time"                     // ✅ เพิ่มอันนี้
+	"time"                   
     "englishkorat_go/models"
+	"englishkorat_go/services"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/line/line-bot-sdk-go/linebot"
@@ -70,16 +71,14 @@ func (h *LineWebhookHandler) Handle(c *fiber.Ctx) error {
     }
 
     for _, event := range webhook.Events {
-        if event.Type != linebot.EventTypeJoin {
-            continue
-        }
-
-        groupID := event.Source.GroupID
-        if groupID == "" {
-            log.Println("⚠️ Join event ไม่พบ groupID")
-            continue
-        }
-
+        switch event.Type {
+			case linebot.EventTypeJoin:
+				groupID := event.Source.GroupID
+				if groupID == "" {
+					log.Println("⚠️ Join event ไม่พบ groupID")
+					continue
+				}
+				
         groupSummary, err := h.Bot.GetGroupSummary(groupID).Do()
         if err != nil {
             log.Printf("❌ Failed to get group summary: %v", err)
@@ -94,6 +93,8 @@ func (h *LineWebhookHandler) Handle(c *fiber.Ctx) error {
         if result.Error == nil {
             existing.GroupName = groupSummary.GroupName
             existing.LastJoinedAt = time.Now()
+			existing.IsActive = true
+			existing.LastLeftAt = nil
             if err := h.DB.Save(&existing).Error; err != nil {
                 log.Printf("❌ Failed to update LineGroup in DB: %v", err)
             } else {
@@ -105,15 +106,41 @@ func (h *LineWebhookHandler) Handle(c *fiber.Ctx) error {
                 GroupName:    groupSummary.GroupName,
                 GroupID:      groupID,
                 LastJoinedAt: time.Now(),
+				IsActive:     true,
             }
             if err := h.DB.Create(&lineGroup).Error; err != nil {
                 log.Printf("❌ Failed to save LineGroup to DB: %v", err)
             } else {
                 log.Printf("💾 Saved LineGroup to DB: %s (%s) at %s",
                     groupSummary.GroupName, groupID, lineGroup.LastJoinedAt.Format(time.RFC3339))
+
+					matcher := services.NewLineGroupMatcher()
+    				go matcher.MatchLineGroupsToGroups()
             }
         }
-    }
+    case linebot.EventTypeLeave:
+				groupID := event.Source.GroupID
+				if groupID == "" {
+					log.Println("⚠️ Leave event ไม่มี groupID")
+					continue
+				}
+
+				var existing models.LineGroup
+				if err := h.DB.Where("group_id = ?", groupID).First(&existing).Error; err == nil {
+					now := time.Now()
+					existing.LastLeftAt = &now
+					existing.IsActive = false
+					if err := h.DB.Save(&existing).Error; err != nil {
+						log.Printf("❌ Failed to update LineGroup leave info: %v", err)
+					} else {
+						log.Printf("🚪 OA left group: %s (%s) at %s",
+							existing.GroupName, groupID, now.Format(time.RFC3339))
+					}
+				} else {
+					log.Printf("⚠️ Leave event received but groupID '%s' not found in DB", groupID)
+				}
+			}
+		}
 	}(c.Body())
 
 

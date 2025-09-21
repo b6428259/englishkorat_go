@@ -220,6 +220,9 @@ type LineGroup struct {
 	GroupName  string    `json:"group_name" gorm:"unique;not null"`
     GroupID      string    `json:"group_id" gorm:"unique;not null"`
 	LastJoinedAt time.Time `json:"last_joined_at" gorm:"not null"`
+	LastLeftAt     *time.Time `json:"last_left_at"`   // null ได้ถ้า OA ยังอยู่ในกลุ่ม
+    IsActive       bool       `json:"is_active" gorm:"default:true"` 
+	MatchedGroupID *uint   `json:"matched_group_id" gorm:"index"`
 }
 
 type User_inCourse struct {
