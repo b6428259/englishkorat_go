@@ -20,7 +20,7 @@ RUN go build -ldflags="-s -w" -o server .
 FROM alpine:3.20 AS runtime
 WORKDIR /app
 
-RUN apk add --no-cache ca-certificates tzdata aws-cli && update-ca-certificates \
+RUN apk add --no-cache ca-certificates tzdata aws-cli wget curl && update-ca-certificates \
     && adduser -D -g '' appuser \
     && mkdir -p /app/logs && chown -R appuser:appuser /app/logs
 
