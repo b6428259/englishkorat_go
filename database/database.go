@@ -118,7 +118,11 @@ func AutoMigrate() {
 		&models.LineGroup{},
 		&models.Book{},
 		&models.ClassProgress{},
+		&models.Bill{},
 	}
+
+	// Pre-sanitize: fix invalid JSON in notifications.channels before altering column type
+	_ = sanitizeNotificationChannels(DB)
 
 	err := DB.AutoMigrate(modelsList...)
 
@@ -145,6 +149,27 @@ func AutoMigrate() {
 		}
 		log.Println("Schema prune completed")
 	}
+}
+
+// sanitizeNotificationChannels ensures notifications.channels contain valid JSON values
+// Sets empty/invalid/NULL to ["normal"]. Best-effort and non-fatal.
+func sanitizeNotificationChannels(db *gorm.DB) error {
+	// Set NULL to default
+	if err := db.Exec(`UPDATE notifications SET channels='["normal"]' WHERE channels IS NULL`).Error; err != nil {
+		log.Printf("sanitize channels (NULL) warning: %v", err)
+	}
+
+	// Set empty string to default
+	if err := db.Exec(`UPDATE notifications SET channels='["normal"]' WHERE channels=''`).Error; err != nil {
+		log.Printf("sanitize channels (empty) warning: %v", err)
+	}
+
+	// If stored as unquoted 'normal' or other invalid JSON, coerce to default using try/catch pattern
+	// MySQL doesn't have try-parse easily; target common bad cases: 'normal', 'popup', 'line'
+	if err := db.Exec(`UPDATE notifications SET channels='["normal"]' WHERE channels IN ('normal','popup','line')`).Error; err != nil {
+		log.Printf("sanitize channels (bare values) warning: %v", err)
+	}
+	return nil
 }
 
 // ensureUsersEmailNullable makes sure the users.email column is nullable with default NULL.

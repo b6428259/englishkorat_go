@@ -11,7 +11,7 @@ import (
 	"englishkorat_go/models"
 	notifsvc "englishkorat_go/services/notifications"
 
-    "github.com/robfig/cron/v3"
+	"github.com/robfig/cron/v3"
 )
 
 // NotificationScheduler จัดการการส่ง notification อัตโนมัติ
@@ -187,7 +187,7 @@ func (ns *NotificationScheduler) sendUpcomingClassNotification(session models.Sc
 		msgTh := fmt.Sprintf("คลาส '%s' ของคุณจะเริ่มในอีก %s เวลา %s",
 			schedule.ScheduleName, ns.translateTimeLabel(timeLabel), startLabel)
 
-		q := notifsvc.QueuedForController(title, titleTh, msg, msgTh, "info")
+		q := notifsvc.QueuedForController(title, titleTh, msg, msgTh, "info", "normal", "popup")
 		if err := ns.ns.EnqueueOrCreate(userIDs, q); err != nil {
 			fmt.Printf("Error creating notifications for session %d: %v\n", session.ID, err)
 		}
@@ -298,7 +298,7 @@ func (ns *NotificationScheduler) sendDailyReminderNotification(userID uint, sess
 			session.Start_time.Format("15:04"))
 	}
 
-	q := notifsvc.QueuedForController("Daily Schedule Reminder", "เตือนตารางเรียนประจำวัน", messageEn, messageTh, "info")
+	q := notifsvc.QueuedForController("Daily Schedule Reminder", "เตือนตารางเรียนประจำวัน", messageEn, messageTh, "info", "normal", "popup")
 	if err := ns.ns.EnqueueOrCreate([]uint{userID}, q); err != nil {
 		fmt.Printf("Error creating daily reminder for user %d: %v\n", userID, err)
 	}
@@ -355,7 +355,7 @@ func (ns *NotificationScheduler) sendMissedSessionNotification(session models.Sc
 	msgTh := fmt.Sprintf("Session '%s' วันที่ %s พลาด (no-show)",
 		session.Schedule.ScheduleName, dateLabel)
 
-	q := notifsvc.QueuedForController(title, titleTh, msg, msgTh, "warning")
+	q := notifsvc.QueuedForController(title, titleTh, msg, msgTh, "warning", "normal", "popup")
 	if err := ns.ns.EnqueueOrCreate(userIDs, q); err != nil {
 		fmt.Printf("Error creating missed-session notifications: %v\n", err)
 	}
@@ -364,68 +364,67 @@ func (ns *NotificationScheduler) sendMissedSessionNotification(session models.Sc
 // NEW CODE FOR DAILY NOTI LINE CLASS : JAH
 
 func (ns *NotificationScheduler) StartDailyScheduler() {
-    loc, _ := time.LoadLocation("Asia/Bangkok")
-    c := cron.New(cron.WithLocation(loc))
+	loc, _ := time.LoadLocation("Asia/Bangkok")
+	c := cron.New(cron.WithLocation(loc))
 
-    // ตั้ง job ให้รันทุกวันเวลา 10:00 น.
-    _, err := c.AddFunc("00 10 * * *", func() {
-        log.Println("⏰ Running daily LINE group reminder job...")
+	// ตั้ง job ให้รันทุกวันเวลา 10:00 น.
+	_, err := c.AddFunc("00 10 * * *", func() {
+		log.Println("⏰ Running daily LINE group reminder job...")
 
-        matcher := NewLineGroupMatcher()
-        matcher.MatchLineGroupsToGroups() // ✅ แมทช์ LineGroup ↔ Group ก่อน
+		matcher := NewLineGroupMatcher()
+		matcher.MatchLineGroupsToGroups() // ✅ แมทช์ LineGroup ↔ Group ก่อน
 
-        ns.sendDailyLineGroupReminders()
-    })
+		ns.sendDailyLineGroupReminders()
+	})
 
-    if err != nil {
-        log.Fatalf("❌ Failed to schedule daily LINE group reminders: %v", err)
-    }
+	if err != nil {
+		log.Fatalf("❌ Failed to schedule daily LINE group reminders: %v", err)
+	}
 
-    c.Start()
+	c.Start()
 }
 
 // sendDailyLineGroupReminders ดึง schedule ของพรุ่งนี้ และส่งแจ้งเตือนเข้าไลน์กลุ่ม
 func (ns *NotificationScheduler) sendDailyLineGroupReminders() {
-    db := database.DB
-    tomorrow := time.Now().AddDate(0, 0, 1)
+	db := database.DB
+	tomorrow := time.Now().AddDate(0, 0, 1)
 
-    var schedules []models.Schedules
-    if err := db.Preload("Group").Where("DATE(start_date) = ?", tomorrow.Format("2006-01-02")).Find(&schedules).Error; err != nil {
-        log.Printf("❌ Error fetching tomorrow's schedules: %v", err)
-        return
-    }
+	var schedules []models.Schedules
+	if err := db.Preload("Group").Where("DATE(start_date) = ?", tomorrow.Format("2006-01-02")).Find(&schedules).Error; err != nil {
+		log.Printf("❌ Error fetching tomorrow's schedules: %v", err)
+		return
+	}
 
-    if len(schedules) == 0 {
-        log.Println("ℹ️ No schedules found for tomorrow")
-        return
-    }
+	if len(schedules) == 0 {
+		log.Println("ℹ️ No schedules found for tomorrow")
+		return
+	}
 
-    lineSvc := NewLineMessagingService()
+	lineSvc := NewLineMessagingService()
 
-    for _, s := range schedules {
-        if s.Group == nil {
-            log.Printf("⚠️ Schedule '%s' (ID=%d) has no Group assigned", s.ScheduleName, s.ID)
-            continue
-        }
+	for _, s := range schedules {
+		if s.Group == nil {
+			log.Printf("⚠️ Schedule '%s' (ID=%d) has no Group assigned", s.ScheduleName, s.ID)
+			continue
+		}
 
-        // หา LineGroup ที่แมทช์กับ Group นี้
-        var lineGroup models.LineGroup
-        if err := db.Where("matched_group_id = ? AND is_active = ?", s.Group.ID, true).First(&lineGroup).Error; err != nil {
-            log.Printf("⚠️ No LineGroup found for Group '%s' (ID=%d)", s.Group.GroupName, s.Group.ID)
-            continue
-        }
+		// หา LineGroup ที่แมทช์กับ Group นี้
+		var lineGroup models.LineGroup
+		if err := db.Where("matched_group_id = ? AND is_active = ?", s.Group.ID, true).First(&lineGroup).Error; err != nil {
+			log.Printf("⚠️ No LineGroup found for Group '%s' (ID=%d)", s.Group.GroupName, s.Group.ID)
+			continue
+		}
 
+		msg := fmt.Sprintf("📢 แจ้งเตือนตารางเรียนพรุ่งนี้\nกลุ่ม: %s\nเวลาเริ่ม: %s\nคลาส: %s",
+			s.Group.GroupName,
+			s.Start_date.Format("15:04"),
+			s.ScheduleName,
+		)
 
-        msg := fmt.Sprintf("📢 แจ้งเตือนตารางเรียนพรุ่งนี้\nกลุ่ม: %s\nเวลาเริ่ม: %s\nคลาส: %s",
-            s.Group.GroupName,
-            s.Start_date.Format("15:04"),
-            s.ScheduleName,
-        )
-
-        if err := lineSvc.SendLineMessageToGroup(lineGroup.GroupID, msg); err != nil {
-            log.Printf("❌ Failed to send message to group '%s': %v", lineGroup.GroupName, err)
-        } else {
-            log.Printf("✅ Sent reminder to LineGroup '%s' (%s)", lineGroup.GroupName, lineGroup.GroupID)
-        }
-    }
+		if err := lineSvc.SendLineMessageToGroup(lineGroup.GroupID, msg); err != nil {
+			log.Printf("❌ Failed to send message to group '%s': %v", lineGroup.GroupName, err)
+		} else {
+			log.Printf("✅ Sent reminder to LineGroup '%s' (%s)", lineGroup.GroupName, lineGroup.GroupID)
+		}
+	}
 }

@@ -43,3 +43,18 @@ func (s *LineMessagingService) SendLineMessageToGroup(groupID string, message st
 	}
 	return nil
 }
+
+// SendLineMessageToUser ส่งข้อความไปยังผู้ใช้ LINE ตาม userId (ต้องเป็น LINE's userId)
+func (s *LineMessagingService) SendLineMessageToUser(userLineID string, message string) error {
+	if s.Bot == nil {
+		return fmt.Errorf("LINE Bot client is not initialized")
+	}
+	if userLineID == "" {
+		return fmt.Errorf("empty LINE user id")
+	}
+	_, err := s.Bot.PushMessage(userLineID, linebot.NewTextMessage(message)).Do()
+	if err != nil {
+		return fmt.Errorf("LINE Messaging API failed: %v", err)
+	}
+	return nil
+}

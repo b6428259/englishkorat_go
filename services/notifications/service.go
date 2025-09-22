@@ -30,6 +30,7 @@ type queuedNotification struct {
 	Message   string    `json:"message"`
 	MessageTh string    `json:"message_th"`
 	Type      string    `json:"type"`
+	Channels  []string  `json:"channels,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -73,9 +74,32 @@ func (s *Service) SetWebSocketHub(hub WSHub) {
 	s.wsHub = hub
 }
 
+// normalizeChannels keeps only allowed values and ensures default channel
+func normalizeChannels(in []string) []string {
+	if len(in) == 0 {
+		return []string{"normal"}
+	}
+	allowed := map[string]struct{}{"normal": {}, "popup": {}, "line": {}}
+	out := make([]string, 0, len(in))
+	seen := map[string]struct{}{}
+	for _, ch := range in {
+		if _, ok := allowed[ch]; ok {
+			if _, dup := seen[ch]; !dup {
+				out = append(out, ch)
+				seen[ch] = struct{}{}
+			}
+		}
+	}
+	if len(out) == 0 {
+		out = []string{"normal"}
+	}
+	return out
+}
+
 // QueuedForController creates minimal queuedNotification (public helper for controller)
-func QueuedForController(title, titleTh, message, messageTh, typ string) queuedNotification {
-	return queuedNotification{Title: title, TitleTh: titleTh, Message: message, MessageTh: messageTh, Type: typ}
+func QueuedForController(title, titleTh, message, messageTh, typ string, channels ...string) queuedNotification {
+	ch := normalizeChannels(channels)
+	return queuedNotification{Title: title, TitleTh: titleTh, Message: message, MessageTh: messageTh, Type: typ, Channels: ch}
 }
 
 // EnqueueOrCreate stores notifications using Redis queue if enabled, else direct insert.
@@ -107,6 +131,14 @@ func (s *Service) createDirect(userIDs []uint, n queuedNotification) error {
 		return nil
 	}
 	notifs := make([]models.Notification, 0, len(userIDs))
+	// marshal channels to JSON
+	// Always set channels JSON, defaulting to ["normal"] to avoid DB default on JSON which MySQL forbids
+	var channelsJSON []byte
+	var err error
+	channelsJSON, err = json.Marshal(normalizeChannels(n.Channels))
+	if err != nil {
+		channelsJSON = []byte(`["normal"]`)
+	}
 	for _, uid := range userIDs {
 		notifs = append(notifs, models.Notification{
 			UserID:    uid,
@@ -116,6 +148,7 @@ func (s *Service) createDirect(userIDs []uint, n queuedNotification) error {
 			MessageTh: n.MessageTh,
 			Type:      n.Type,
 			Read:      false,
+			Channels:  channelsJSON,
 		})
 	}
 

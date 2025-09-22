@@ -5,6 +5,7 @@ import (
 	"englishkorat_go/database"
 	"englishkorat_go/middleware"
 	"englishkorat_go/models"
+	"englishkorat_go/services"
 	notifsvc "englishkorat_go/services/notifications"
 	"log"
 	"strconv"
@@ -127,15 +128,16 @@ func (nc *NotificationController) GetNotification(c *fiber.Ctx) error {
 // CreateNotification creates a new notification (admin only)
 func (nc *NotificationController) CreateNotification(c *fiber.Ctx) error {
 	var req struct {
-		UserID    uint   `json:"user_id"`
-		UserIDs   []uint `json:"user_ids"`  // For multiple users
-		Role      string `json:"role"`      // For all users with specific role
-		BranchID  uint   `json:"branch_id"` // For all users in branch
-		Title     string `json:"title" validate:"required"`
-		TitleTh   string `json:"title_th"`
-		Message   string `json:"message" validate:"required"`
-		MessageTh string `json:"message_th"`
-		Type      string `json:"type" validate:"required"`
+		UserID    uint     `json:"user_id"`
+		UserIDs   []uint   `json:"user_ids"`  // For multiple users
+		Role      string   `json:"role"`      // For all users with specific role
+		BranchID  uint     `json:"branch_id"` // For all users in branch
+		Title     string   `json:"title" validate:"required"`
+		TitleTh   string   `json:"title_th"`
+		Message   string   `json:"message" validate:"required"`
+		MessageTh string   `json:"message_th"`
+		Type      string   `json:"type" validate:"required"`
+		Channels  []string `json:"channels"` // e.g., ["normal","popup","line"]
 	}
 
 	if err := c.BodyParser(&req); err != nil {
@@ -202,9 +204,24 @@ func (nc *NotificationController) CreateNotification(c *fiber.Ctx) error {
 
 	// Create notifications
 	service := notifsvc.NewService()
-	q := notifsvc.QueuedForController(req.Title, req.TitleTh, req.Message, req.MessageTh, req.Type)
+	q := notifsvc.QueuedForController(req.Title, req.TitleTh, req.Message, req.MessageTh, req.Type, req.Channels...)
 	if err := service.EnqueueOrCreate(userIDs, q); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create notifications"})
+	}
+
+	// Optional LINE delivery when requested
+	if containsChannel(req.Channels, "line") {
+		lineSvc := services.NewLineMessagingService()
+		// fetch users to get LineID
+		var users []models.User
+		database.DB.Where("id IN ?", userIDs).Find(&users)
+		for _, u := range users {
+			if u.LineID != "" {
+				if err := lineSvc.SendLineMessageToUser(u.LineID, buildLineMessage(req.Title, req.TitleTh, req.Message, req.MessageTh)); err != nil {
+					log.Printf("LINE push failed for user %d: %v", u.ID, err)
+				}
+			}
+		}
 	}
 
 	// Log activity
@@ -219,6 +236,27 @@ func (nc *NotificationController) CreateNotification(c *fiber.Ctx) error {
 		"queued":       true,
 		"target_users": len(userIDs),
 	})
+}
+
+// containsChannel checks if list contains the given channel
+func containsChannel(channels []string, target string) bool {
+	for _, c := range channels {
+		if c == target {
+			return true
+		}
+	}
+	return false
+}
+
+// buildLineMessage builds a simple message combining Thai/English if present
+func buildLineMessage(titleEn, titleTh, msgEn, msgTh string) string {
+	if titleTh != "" || msgTh != "" {
+		if titleEn != "" || msgEn != "" {
+			return titleTh + "\n" + msgTh + "\n\n" + titleEn + "\n" + msgEn
+		}
+		return titleTh + "\n" + msgTh
+	}
+	return titleEn + "\n" + msgEn
 }
 
 // MarkAsRead marks a notification as read

@@ -25,6 +25,8 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	scheduleController := &controllers.ScheduleController{}
 	groupController := &controllers.GroupController{}
 	classProgressImportController := &controllers.ClassProgressImportController{}
+	billsImportController := &controllers.BillsImportController{}
+	billsController := &controllers.BillsController{}
 	wsController := controllers.NewWebSocketController(wsHub)
 
 	// localhost:3000/api/auth/login
@@ -199,6 +201,17 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	imports := protected.Group("/import", middleware.RequireOwnerOrAdmin())
 	imports.Post("/class-progress", classProgressImportController.Import)
 	imports.Post("/class-progress/undo", classProgressImportController.Undo)
+	imports.Post("/bills", billsImportController.Import)
+
+	// Bills management routes (financial data - restrict to owner/admin)
+	bills := protected.Group("/bills", middleware.RequireOwnerOrAdmin())
+	bills.Get("/", billsController.ListBills)
+	bills.Get("/:id", billsController.GetBill)
+	bills.Get("/by-transaction/:transactionId", billsController.GetByTransaction)
+	bills.Get("/by-invoice/:invoice", billsController.GetByInvoice)
+	bills.Post("/", billsController.CreateBill)
+	bills.Patch("/:id", billsController.PatchBill)
+	bills.Delete("/:id", billsController.DeleteBill)
 
 	// WebSocket routes
 	ws := protected.Group("/ws")

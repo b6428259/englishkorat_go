@@ -52,7 +52,7 @@ jobs:
         id: vars
         run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
 
-      - name: Deploy over SSH
+      - name: Deploy over SSH (fallback-only env)
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -124,10 +124,18 @@ jobs:
                 || { echo "ERROR: Failed to fetch docker-compose.production.yml" >&2; exit 1; }
               # Always refresh generate-env.sh to avoid stale version on the host
               mkdir -p deploy
+              # We now rely on fallback-only, but keep generate-env.sh fetch as optional
               RAW_GEN_URL="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/deploy/generate-env.sh"
-              echo "[LIGHT DEPLOY] Refreshing generate-env.sh: $RAW_GEN_URL" >&2
-              (curl -fsSL "$RAW_GEN_URL" -o deploy/generate-env.sh || wget -qO deploy/generate-env.sh "$RAW_GEN_URL") || echo "WARN: could not fetch generate-env.sh" >&2
+              (curl -fsSL "$RAW_GEN_URL" -o deploy/generate-env.sh || wget -qO deploy/generate-env.sh "$RAW_GEN_URL") || true
+              RAW_FALLBACK_URL="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/deploy/fallback-write-env.sh"
+              echo "[LIGHT DEPLOY] Refreshing fallback-write-env.sh: $RAW_FALLBACK_URL" >&2
+              (curl -fsSL "$RAW_FALLBACK_URL" -o deploy/fallback-write-env.sh || wget -qO deploy/fallback-write-env.sh "$RAW_FALLBACK_URL") || echo "WARN: could not fetch fallback-write-env.sh" >&2
+              RAW_CLEAN_URL="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/deploy/host-cleanup.sh"
+              echo "[LIGHT DEPLOY] Refreshing host-cleanup.sh: $RAW_CLEAN_URL" >&2
+              (curl -fsSL "$RAW_CLEAN_URL" -o deploy/host-cleanup.sh || wget -qO deploy/host-cleanup.sh "$RAW_CLEAN_URL") || echo "WARN: could not fetch host-cleanup.sh" >&2
               chmod +x deploy/generate-env.sh 2>/dev/null || true
+              chmod +x deploy/fallback-write-env.sh 2>/dev/null || true
+              chmod +x deploy/host-cleanup.sh 2>/dev/null || true
             fi
 
             # Final check compose exists
@@ -136,29 +144,32 @@ jobs:
               exit 1
             fi
 
-            # Regenerate .env if generator exists
-            if [ -x deploy/generate-env.sh ]; then
-              echo "Generating .env from SSM" >&2
-              # Export AWS creds if repository secrets provided (optional)
-              if [ -n "${{ secrets.AWS_ACCESS_KEY_ID }}" ]; then export AWS_ACCESS_KEY_ID='${{ secrets.AWS_ACCESS_KEY_ID }}'; fi
-              if [ -n "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then export AWS_SECRET_ACCESS_KEY='${{ secrets.AWS_SECRET_ACCESS_KEY }}'; fi
-              if [ -n "${{ secrets.AWS_SESSION_TOKEN }}" ]; then export AWS_SESSION_TOKEN='${{ secrets.AWS_SESSION_TOKEN }}'; fi
-              # Ensure region and stage are exported to child process (and AWS_DEFAULT_REGION for CLI)
-              export AWS_REGION
-              export AWS_DEFAULT_REGION="$AWS_REGION"
-              export STAGE
-              export SSM_BASE_PATH="/englishkorat"
-              echo "Preflight: checking AWS identity" >&2
-              if ! aws sts get-caller-identity >/dev/null 2>&1; then
-                echo "ERROR: AWS credentials not available in this session. Aborting before env generation." >&2
-                exit 1
-              fi
-              if ! bash deploy/generate-env.sh; then
-                echo "ERROR: generate-env.sh failed; aborting deployment before container restart" >&2
-                exit 1
-              fi
+            # Always generate .env using fallback-write-env.sh (GitHub Secrets only)
+            echo "Generating .env using fallback-write-env.sh (GitHub Secrets)" >&2
+            # Map GitHub Secrets (prefer PROD_* namespace)
+            export PROD_DB_HOST='${{ secrets.PROD_DB_HOST }}'
+            export PROD_DB_PORT='${{ secrets.PROD_DB_PORT }}'
+            export PROD_DB_USER='${{ secrets.PROD_DB_USER }}'
+            export PROD_DB_PASSWORD='${{ secrets.PROD_DB_PASSWORD }}'
+            export PROD_DB_NAME='${{ secrets.PROD_DB_NAME }}'
+            export PROD_REDIS_HOST='${{ secrets.PROD_REDIS_HOST }}'
+            export PROD_REDIS_PORT='${{ secrets.PROD_REDIS_PORT }}'
+            export PROD_REDIS_PASSWORD='${{ secrets.PROD_REDIS_PASSWORD }}'
+            export LINE_CHANNEL_SECRET='${{ secrets.LINE_CHANNEL_SECRET }}'
+            export LINE_CHANNEL_ACCESS_TOKEN='${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}'
+            export JWT_SECRET='${{ secrets.JWT_SECRET }}'
+            export JWT_EXPIRES_IN='${{ secrets.JWT_EXPIRES_IN }}'
+            export AWS_REGION
+            export AWS_ACCESS_KEY_ID='${{ secrets.AWS_ACCESS_KEY_ID }}'
+            export AWS_SECRET_ACCESS_KEY='${{ secrets.AWS_SECRET_ACCESS_KEY }}'
+            export S3_BUCKET_NAME='${{ secrets.S3_BUCKET_NAME }}'
+            export APP_ENV=production
+            export STAGE=production
+            if [ -x deploy/fallback-write-env.sh ]; then
+              bash deploy/fallback-write-env.sh
             else
-              echo "WARN: deploy/generate-env.sh not found or not executable; using existing .env" >&2
+              echo "ERROR: fallback-write-env.sh not found or not executable" >&2
+              exit 1
             fi
 
             # Pre-deploy: remove known conflicting containers that would block compose up
@@ -200,7 +211,7 @@ jobs:
             echo "Launching stack (candidate tag=${IMAGE_TAG})" >&2
             # Source .env for docker-compose variable expansion
             set -a; source .env; set +a
-            # Override USE_SSM to false so app uses env vars instead of SSM
+            # Explicitly force USE_SSM to false so app uses env vars
             export USE_SSM=false
             IMAGE_TAG=${IMAGE_TAG} docker compose -f docker-compose.production.yml up -d --remove-orphans
 
@@ -236,7 +247,12 @@ jobs:
 
             echo "$IMAGE_TAG" > "$LAST_TAG_FILE"
             echo "Deployment successful (tag=$IMAGE_TAG)" >&2
-            docker image prune -f || true
+            # Post-deploy cleanup (free disk)
+            if [ -x deploy/host-cleanup.sh ]; then
+              bash deploy/host-cleanup.sh || true
+            else
+              docker image prune -f || true
+            fi
 
       - name: Disk usage after deploy
         if: always()

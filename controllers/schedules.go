@@ -36,10 +36,12 @@ type CreateScheduleRequest struct {
 	DefaultRoomID    *uint `json:"default_room_id"`
 
 	// Settings
-	AutoRescheduleHoliday bool   `json:"auto_reschedule"`
-	Notes                 string `json:"notes"`
-	SessionStartTime      string `json:"session_start_time" validate:"required"` // เวลาเริ่มต้นของแต่ละ session เช่น "09:00"
-	CustomRecurringDays   []int  `json:"custom_recurring_days,omitempty"`        // สำหรับ custom pattern [0=วันอาทิตย์, 1=วันจันทร์, ...]
+	AutoRescheduleHoliday bool `json:"auto_reschedule"`
+	// Alias to accept client field auto_reschedule_holidays as well
+	AutoRescheduleHolidaysAlias bool   `json:"auto_reschedule_holidays"`
+	Notes                       string `json:"notes"`
+	SessionStartTime            string `json:"session_start_time" validate:"required"` // เวลาเริ่มต้นของแต่ละ session เช่น "09:00"
+	CustomRecurringDays         []int  `json:"custom_recurring_days,omitempty"`        // สำหรับ custom pattern [0=วันอาทิตย์, 1=วันจันทร์, ...]
 }
 
 type ConfirmScheduleRequest struct {
@@ -69,6 +71,22 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 	var req CreateScheduleRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	// Normalize optional numeric fields: treat 0 as null (pointer = nil)
+	if req.GroupID != nil && *req.GroupID == 0 {
+		req.GroupID = nil
+	}
+	if req.DefaultTeacherID != nil && *req.DefaultTeacherID == 0 {
+		req.DefaultTeacherID = nil
+	}
+	if req.DefaultRoomID != nil && *req.DefaultRoomID == 0 {
+		req.DefaultRoomID = nil
+	}
+
+	// For non-class schedules, ignore any provided group_id entirely
+	if req.ScheduleType != "class" {
+		req.GroupID = nil
 	}
 
 	// Validate schedule type specific requirements
@@ -110,6 +128,11 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 		}
 	}
 
+	// Check for potential schedule conflicts to prevent duplicates
+	if err := checkScheduleConflicts(req, userID); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
 	// เริ่ม transaction
 	tx := database.DB.Begin()
 
@@ -119,6 +142,9 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 		tx.Rollback()
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to get user info"})
 	}
+
+	// Determine auto-reschedule flag supporting both field names
+	autoReschedule := req.AutoRescheduleHoliday || req.AutoRescheduleHolidaysAlias
 
 	// สร้าง schedule
 	schedule := models.Schedules{
@@ -135,7 +161,7 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 		DefaultTeacherID:        req.DefaultTeacherID,
 		DefaultRoomID:           req.DefaultRoomID,
 		Status:                  "assigned", // เริ่มต้นเป็น assigned
-		Auto_Reschedule_holiday: req.AutoRescheduleHoliday,
+		Auto_Reschedule_holiday: autoReschedule,
 		Notes:                   req.Notes,
 		Admin_assigned:          assignedUser.Username,
 	}
@@ -179,6 +205,18 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 	if err != nil {
 		tx.Rollback()
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate sessions: " + err.Error()})
+	}
+
+	// If estimated_end_date was not provided, set it to the date of the last generated session
+	if schedule.Estimated_end_date.IsZero() && len(sessions) > 0 {
+		last := sessions[len(sessions)-1]
+		if last.Session_date != nil {
+			schedule.Estimated_end_date = *last.Session_date
+			if err := tx.Model(&schedule).Update("estimated_end_date", schedule.Estimated_end_date).Error; err != nil {
+				tx.Rollback()
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to set estimated_end_date"})
+			}
+		}
 	}
 
 	// บันทึก sessions
@@ -1386,4 +1424,113 @@ func (sc *ScheduleController) GetSession(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(resp)
+}
+
+// checkScheduleConflicts ตรวจสอบการชนกันของตารางสำหรับการสร้างใหม่
+func checkScheduleConflicts(req CreateScheduleRequest, userID uint) error {
+	// For class schedules: check if same group already has active schedule
+	if req.ScheduleType == "class" && req.GroupID != nil {
+		var existingSchedules []models.Schedules
+		err := database.DB.Where("group_id = ? AND status IN ? AND schedule_type = ?",
+			*req.GroupID, []string{"assigned", "scheduled"}, "class").Find(&existingSchedules).Error
+		if err != nil {
+			return fmt.Errorf("failed to check existing schedules: %v", err)
+		}
+
+		if len(existingSchedules) > 0 {
+			return fmt.Errorf("group already has an active class schedule (ID: %d)", existingSchedules[0].ID)
+		}
+	}
+
+	// For event/appointment schedules: check if same participants have overlapping events
+	if req.ScheduleType != "class" && len(req.ParticipantUserIDs) > 0 {
+		// Get overlapping time range (start_date to estimated_end_date)
+		startTime, err := time.Parse("15:04", req.SessionStartTime)
+		if err != nil {
+			return fmt.Errorf("invalid session start time for conflict check")
+		}
+
+		sessionDuration := time.Duration(req.HoursPerSession) * time.Hour
+		endTime := startTime.Add(sessionDuration)
+
+		// Check for overlapping sessions for any of the participants
+		for _, participantID := range req.ParticipantUserIDs {
+			var conflictingSessions []models.Schedule_Sessions
+			query := database.DB.Table("schedule_sessions").
+				Joins("JOIN schedules ON schedules.id = schedule_sessions.schedule_id").
+				Joins("JOIN schedule_participants ON schedule_participants.schedule_id = schedules.id").
+				Where("schedule_participants.user_id = ?", participantID).
+				Where("schedule_sessions.session_date BETWEEN ? AND ?", req.StartDate, req.EstimatedEndDate).
+				Where("schedule_sessions.status NOT IN ?", []string{"cancelled", "no-show"}).
+				Where("schedules.status IN ?", []string{"assigned", "scheduled"})
+
+			err := query.Find(&conflictingSessions).Error
+			if err != nil {
+				return fmt.Errorf("failed to check session conflicts: %v", err)
+			}
+
+			// Check time overlap for each conflicting session
+			for _, session := range conflictingSessions {
+				if session.Start_time != nil && session.End_time != nil {
+					sessionStart := session.Start_time.Format("15:04")
+					sessionEnd := session.End_time.Format("15:04")
+					newStart := startTime.Format("15:04")
+					newEnd := endTime.Format("15:04")
+
+					// Check if times overlap (not strictly before or after)
+					if !(newEnd <= sessionStart || sessionEnd <= newStart) {
+						var user models.User
+						database.DB.First(&user, participantID)
+						return fmt.Errorf("participant %s already has a conflicting session at %s-%s",
+							user.Username, sessionStart, sessionEnd)
+					}
+				}
+			}
+		}
+	}
+
+	// For teacher conflict: check if default teacher has overlapping sessions
+	if req.DefaultTeacherID != nil {
+		startTime, err := time.Parse("15:04", req.SessionStartTime)
+		if err != nil {
+			return fmt.Errorf("invalid session start time for teacher conflict check")
+		}
+
+		sessionDuration := time.Duration(req.HoursPerSession) * time.Hour
+		endTime := startTime.Add(sessionDuration)
+
+		var conflictingSessions []models.Schedule_Sessions
+		query := database.DB.Table("schedule_sessions").
+			Joins("JOIN schedules ON schedules.id = schedule_sessions.schedule_id").
+			Where("(schedules.default_teacher_id = ? OR schedule_sessions.assigned_teacher_id = ?)",
+				*req.DefaultTeacherID, *req.DefaultTeacherID).
+			Where("schedule_sessions.session_date BETWEEN ? AND ?", req.StartDate, req.EstimatedEndDate).
+			Where("schedule_sessions.status NOT IN ?", []string{"cancelled", "no-show"}).
+			Where("schedules.status IN ?", []string{"assigned", "scheduled"})
+
+		err = query.Find(&conflictingSessions).Error
+		if err != nil {
+			return fmt.Errorf("failed to check teacher conflicts: %v", err)
+		}
+
+		// Check time overlap for teacher sessions
+		for _, session := range conflictingSessions {
+			if session.Start_time != nil && session.End_time != nil {
+				sessionStart := session.Start_time.Format("15:04")
+				sessionEnd := session.End_time.Format("15:04")
+				newStart := startTime.Format("15:04")
+				newEnd := endTime.Format("15:04")
+
+				// Check if times overlap
+				if !(newEnd <= sessionStart || sessionEnd <= newStart) {
+					var teacher models.User
+					database.DB.First(&teacher, *req.DefaultTeacherID)
+					return fmt.Errorf("teacher %s already has a conflicting session at %s-%s",
+						teacher.Username, sessionStart, sessionEnd)
+				}
+			}
+		}
+	}
+
+	return nil
 }

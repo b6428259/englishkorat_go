@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -78,6 +79,7 @@ type NotificationDTO struct {
 	Message   string      `json:"message"`
 	MessageTh string      `json:"message_th,omitempty"`
 	Type      string      `json:"type"`
+	Channels  []string    `json:"channels,omitempty"`
 	Read      bool        `json:"read"`
 	ReadAt    *time.Time  `json:"read_at,omitempty"`
 	User      UserShort   `json:"user"`
@@ -91,6 +93,15 @@ type NotificationDTO struct {
 func ToNotificationDTO(n models.Notification) NotificationDTO {
 	var us UserShort
 	var bs BranchShort
+	// Parse channels JSON -> []string, default to ["normal"] if none
+	channels := []string{}
+	if !n.Channels.IsNull() {
+		// best-effort parse; ignore errors and leave empty to fall back
+		_ = json.Unmarshal(n.Channels, &channels)
+	}
+	if len(channels) == 0 {
+		channels = []string{"normal"}
+	}
 
 	// User name from Student profile if available
 	if n.User.Student != nil {
@@ -163,6 +174,7 @@ func ToNotificationDTO(n models.Notification) NotificationDTO {
 		Message:   n.Message,
 		MessageTh: n.MessageTh,
 		Type:      n.Type,
+		Channels:  channels,
 		Read:      n.Read,
 		ReadAt:    n.ReadAt,
 		User:      us,

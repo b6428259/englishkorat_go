@@ -144,11 +144,69 @@ Groups represent learning groups containing students with course and payment inf
 ## Schedule Management
 
 ### Create Schedule
-**POST** `/api/schedules`
+POST `/api/schedules`
 
-**Permissions:** Admin, Owner
+Permissions: Admin, Owner
 
-#### For Class Schedules:
+Overview
+- The same endpoint handles both group-based "class" schedules and non-class schedules (events, appointments, meetings, etc.).
+- Validation differs by `schedule_type` — certain fields are required for `class` and others for `event`/`appointment`.
+
+Required/Optional/Conditional fields
+- Required for ALL schedule types:
+  - `schedule_name` (string) — required. Human-friendly name.
+  - `schedule_type` (string) — required. One of: `class`, `meeting`, `event`, `holiday`, `appointment`.
+  - `recurring_pattern` (string) — required. One of: `daily`, `weekly`, `bi-weekly`, `monthly`, `yearly`, `custom`.
+  - `total_hours` (int) — required. Total planned hours for the schedule.
+  - `hours_per_session` (int) — required. Duration of each session in hours.
+  - `session_per_week` (int) — required. Sessions per week for recurring schedules.
+  - `start_date` (ISO datetime) — required. The first effective date for the schedule.
+  - `estimated_end_date` (ISO datetime) — optional. If omitted, the server will compute and set it to the date of the last generated session.
+  - `session_start_time` (string, e.g. `09:00`) — required. Local time of day when sessions start.
+
+- Conditional / required by type:
+  - `group_id` (uint) — required when `schedule_type == "class"`. The schedule will be linked to an existing Group (group must exist and typically have members).
+  - `participant_user_ids` ([]uint) — required when `schedule_type != "class"` and you want to create an event/appointment with explicit participants. At least one participant is recommended for events/appointments.
+  - `custom_recurring_days` ([]int) — required when `recurring_pattern == "custom"`; format uses 0=Sunday, 1=Monday, ...
+
+- Optional fields:
+  - `default_teacher_id` (uint) — optional. Assign a default teacher for all generated sessions.
+  - `default_room_id` (uint) — optional. Assign a default room for sessions.
+  - `auto_reschedule` / `auto_reschedule_holiday` (bool) — optional. Controls auto-rescheduling behavior for holidays.
+  - `notes` (string) — optional free-text notes.
+
+Input normalization
+- For optional foreign keys sent as numeric IDs, if the frontend sends `0` (e.g., `group_id: 0`, `default_room_id: 0`, `default_teacher_id: 0`) the API will treat these as `null` and not set a relation. This avoids foreign key constraint errors on non-existent IDs.
+- For non-class schedules (`schedule_type != "class"`), any provided `group_id` will be ignored.
+- `custom_recurring_days` accepts weekdays as integers where 0=Sunday, 1=Monday, ..., 6=Saturday. Some clients send 7 for Sunday; the API maps 7 → 0 automatically.
+
+Validation notes and constraints
+- `schedule_type` is validated server-side; send only the supported values listed above.
+- `recurring_pattern` controls session generation; if `custom` is chosen, supply `custom_recurring_days`.
+- `total_hours` should be >= `hours_per_session` and ideally divisible such that the total number of sessions computed makes sense for the requested `session_per_week`.
+- Times (`start_date`, `estimated_end_date`) are treated in the server timezone (Asia/Bangkok by default in the app). Provide ISO strings (UTC or with offset) to avoid ambiguity.
+- `session_start_time` is a local time-of-day (HH:MM). The service combines `start_date` and `session_start_time` to compute session datetimes.
+
+How to create a Class vs Private-Class vs Event/Appointment/Personal
+
+- Class (group-based recurring class)
+  - Use `schedule_type: "class"` and provide `group_id` referencing a Group that contains the students.
+  - The schedule is intended to represent a regular class for a Group. Sessions will be auto-generated based on `recurring_pattern`, `session_per_week`, `hours_per_session`, and the provided start date/time.
+
+- Private class (recommended approach)
+  - There is no separate `private_class` schedule_type in the current API. To implement a one-on-one/private class:
+    1. Create a dedicated Group whose `max_students` is 1 (or that contains a single student member) and mark payment/metadata accordingly.
+    2. Create a `class` schedule and set `group_id` to that private Group.
+  - This approach keeps the group-based permissions/notifications consistent while making the class effectively private.
+
+- Event / Appointment / Personal sessions (non-class)
+  - For ad-hoc events, meetings, or single-person appointments use `schedule_type: "event"` or `"appointment"`.
+  - Provide `participant_user_ids` to explicitly list attendees (organizer, participants). For personal/one-off appointments, include the single participant and optionally the organizer user ID.
+  - These schedules do not require a `group_id` and can be used for one-time events or recurring appointments with participants.
+
+Examples
+
+Class example (group-based):
 ```json
 {
   "schedule_name": "English A1 Morning Class",
@@ -164,12 +222,16 @@ Groups represent learning groups containing students with course and payment inf
   "default_room_id": 3,
   "auto_reschedule": true,
   "session_start_time": "09:00",
-  "custom_recurring_days": [1, 3],  // Monday, Wednesday
+  "custom_recurring_days": [1, 3],
   "notes": "Beginner English class"
 }
 ```
 
-#### For Event/Appointment Schedules:
+Private class example (create a private group with one student, then schedule):
+1) Create a group with a single student (API: `POST /api/groups`).
+2) Create schedule using `schedule_type: "class"` and `group_id` set to the private group's id.
+
+Event / Appointment example:
 ```json
 {
   "schedule_name": "Student Orientation",
@@ -186,7 +248,12 @@ Groups represent learning groups containing students with course and payment inf
 }
 ```
 
-**Response:**
+Behavior notes
+- Sessions are auto-generated immediately upon schedule creation based on `recurring_pattern`, `start_date`, `session_start_time`, `hours_per_session`, and `session_per_week` (plus `custom_recurring_days` for `custom`).
+- If `estimated_end_date` is not provided, session generation uses a safe upper bound and generates exactly `total_hours / hours_per_session` sessions. The API then sets `estimated_end_date` to the date of the last generated session.
+- For events/appointments without a group, participants are created from `participant_user_ids`. The creator is marked as `organizer` if included in the list.
+
+Response
 ```json
 {
   "message": "Schedule created successfully",
@@ -650,3 +717,32 @@ PATCH /api/schedules/sessions/45/status
 ```
 
 This comprehensive system provides full flexibility for managing both structured class schedules and ad-hoc events/appointments while maintaining proper permissions, payment tracking, and notification workflows.
+
+## Users API — Search
+
+The `GET /api/users` endpoint supports a `search` query parameter that searches across multiple user fields. Matching results are ordered by relevance to surface the most likely matches first.
+
+Ranking (highest → lowest):
+- Exact match on `email` or `phone` (highest priority)
+- Exact match on `username`
+- Exact match on student `first_name`, `last_name`, or `nickname`
+- Partial match on `username`
+- Partial match on `email` or `phone`
+- Partial match on student name fields
+
+Examples:
+
+- Search by exact email (highest priority):
+  GET /api/users?search=alice@example.com
+
+- Search by phone (exact or partial):
+  GET /api/users?search=0812345678
+  GET /api/users?search=08123
+
+- Search by username or student name (partial match):
+  GET /api/users?search=john
+  GET /api/users?search=สมชาย
+
+Notes:
+- The implementation performs a case-insensitive search and will only JOIN the `students` table when a `search` is present to avoid unnecessary joins for simple listings.
+- For large datasets consider adding indexes on `users.email`, `users.phone`, `users.username`, and `students.first_name/last_name` to improve performance.

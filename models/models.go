@@ -217,12 +217,12 @@ type Student_Group struct {
 
 type LineGroup struct {
 	BaseModel
-	GroupName  string    `json:"group_name" gorm:"unique;not null"`
-    GroupID      string    `json:"group_id" gorm:"unique;not null"`
-	LastJoinedAt time.Time `json:"last_joined_at" gorm:"not null"`
-	LastLeftAt     *time.Time `json:"last_left_at"`   // null ได้ถ้า OA ยังอยู่ในกลุ่ม
-    IsActive       bool       `json:"is_active" gorm:"default:true"` 
-	MatchedGroupID *uint   `json:"matched_group_id" gorm:"index"`
+	GroupName      string     `json:"group_name" gorm:"unique;not null"`
+	GroupID        string     `json:"group_id" gorm:"unique;not null"`
+	LastJoinedAt   time.Time  `json:"last_joined_at" gorm:"not null"`
+	LastLeftAt     *time.Time `json:"last_left_at"` // null ได้ถ้า OA ยังอยู่ในกลุ่ม
+	IsActive       bool       `json:"is_active" gorm:"default:true"`
+	MatchedGroupID *uint      `json:"matched_group_id" gorm:"index"`
 }
 
 type User_inCourse struct {
@@ -318,14 +318,18 @@ type ActivityLog struct {
 // Notification model
 type Notification struct {
 	BaseModel
-	UserID    uint       `json:"user_id" gorm:"not null"`
-	Title     string     `json:"title" gorm:"size:255;not null"`
-	TitleTh   string     `json:"title_th" gorm:"size:255"`
-	Message   string     `json:"message" gorm:"type:text;not null"`
-	MessageTh string     `json:"message_th" gorm:"type:text"`
-	Type      string     `json:"type" gorm:"size:50;not null;type:enum('info','warning','error','success')"` // info, warning, error, success
-	Read      bool       `json:"read" gorm:"default:false"`
-	ReadAt    *time.Time `json:"read_at"`
+	UserID    uint   `json:"user_id" gorm:"not null"`
+	Title     string `json:"title" gorm:"size:255;not null"`
+	TitleTh   string `json:"title_th" gorm:"size:255"`
+	Message   string `json:"message" gorm:"type:text;not null"`
+	MessageTh string `json:"message_th" gorm:"type:text"`
+	Type      string `json:"type" gorm:"size:50;not null;type:enum('info','warning','error','success')"` // info, warning, error, success
+	// Channels defines how to deliver/display this notification on the client side
+	// Allowed values: "normal", "popup", "line". Can contain multiple.
+	// Note: MySQL JSON columns cannot have a DB-level DEFAULT. We set the default at insert time in code.
+	Channels JSON       `json:"channels" gorm:"type:json"`
+	Read     bool       `json:"read" gorm:"default:false"`
+	ReadAt   *time.Time `json:"read_at"`
 
 	// Relationships
 	User User `json:"user,omitempty" gorm:"foreignKey:UserID"`
@@ -514,4 +518,61 @@ type ClassProgress struct {
 	SpecialHours *int   `json:"special_hours" gorm:"default:null"`
 	TotalHours   *int   `json:"total_hours" gorm:"default:null"`
 	BranchRaw    string `json:"branch_raw" gorm:"size:100"` // e.g., "1,3"
+}
+
+type Bill struct {
+	BaseModel
+	// Provenance
+	Source string `json:"source" gorm:"size:50;default:'wave'"`
+	// TransactionID is an application-generated deterministic ID that groups multiple lines of the same bill
+	// Lines with the same invoice number will share the same TransactionID
+	TransactionID string `json:"transaction_id" gorm:"size:100;index"`
+	// SourceTransactionID stores the original ID from Wave export (normalized from scientific notation)
+	SourceTransactionID string `json:"source_transaction_id" gorm:"size:100;index"`
+	// RowUID is a deterministic unique identifier for a row constructed from multiple fields for deduplication
+	RowUID          string     `json:"row_uid" gorm:"size:255;uniqueIndex"`
+	TransactionDate *time.Time `json:"transaction_date"`
+
+	// High-level bill semantics for easy understanding and filtering
+	// BillType: normal (default), deposit, installment, payment, adjustment
+	BillType          string `json:"bill_type" gorm:"size:20;default:'normal';type:enum('normal','deposit','installment','payment','adjustment')"`
+	InstallmentNo     *int   `json:"installment_no"`
+	TotalInstallments *int   `json:"total_installments"`
+
+	// Wave export core columns
+	AccountName                string `json:"account_name" gorm:"size:255"`
+	TransactionDescription     string `json:"transaction_description" gorm:"size:500"`
+	TransactionLineDescription string `json:"transaction_line_description" gorm:"size:500"`
+
+	Amount       *float64 `json:"amount" gorm:"type:decimal(18,2)"`
+	DebitAmount  *float64 `json:"debit_amount" gorm:"type:decimal(18,2)"`
+	CreditAmount *float64 `json:"credit_amount" gorm:"type:decimal(18,2)"`
+
+	OtherAccount  string `json:"other_account" gorm:"size:255"`
+	Customer      string `json:"customer" gorm:"size:255"`
+	InvoiceNumber string `json:"invoice_number" gorm:"size:100"`
+	NotesMemo     string `json:"notes_memo" gorm:"type:text"`
+
+	AmountBeforeSalesTax *float64 `json:"amount_before_sales_tax" gorm:"type:decimal(18,2)"`
+	SalesTaxAmount       *float64 `json:"sales_tax_amount" gorm:"type:decimal(18,2)"`
+	SalesTaxName         string   `json:"sales_tax_name" gorm:"size:255"`
+
+	TransactionDateAdded        *time.Time `json:"transaction_date_added"`
+	TransactionDateLastModified *time.Time `json:"transaction_date_last_modified"`
+
+	AccountGroup string `json:"account_group" gorm:"size:100"`
+	AccountType  string `json:"account_type" gorm:"size:100"`
+	AccountID    string `json:"account_id" gorm:"size:100"`
+
+	// Derived metadata
+	PaymentMethod string `json:"payment_method" gorm:"size:20;type:enum('cash','debit_card','credit_card','transfer','other','unknown');default:'unknown'"`
+	Currency      string `json:"currency" gorm:"size:10"`
+	Status        string `json:"status" gorm:"size:50;default:'record'"` // record, reconciled, etc
+
+	// Optional due/paid dates (if applicable)
+	DueDate  *time.Time `json:"due_date"`
+	PaidDate *time.Time `json:"paid_date"`
+
+	// Raw preserve
+	Raw JSON `json:"raw" gorm:"type:json"`
 }

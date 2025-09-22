@@ -93,6 +93,21 @@ func generateSessionTimes(startDate, endDate time.Time, sessionStartTime time.Ti
 	current := startDate
 	sessionNumber := 1
 
+	// Normalize custom days: accept 0..6 with 0=Sun, and map 7->0 (some clients send 7 for Sunday)
+	normalizedDays := make(map[int]bool, len(customDays))
+	for _, d := range customDays {
+		if d == 7 {
+			d = 0
+		}
+		if d < 0 {
+			d = 0
+		}
+		if d > 6 {
+			d = d % 7
+		}
+		normalizedDays[d] = true
+	}
+
 	for current.Before(endDate) || current.Equal(endDate) {
 		shouldCreateSession := false
 
@@ -106,11 +121,13 @@ func generateSessionTimes(startDate, endDate time.Time, sessionStartTime time.Ti
 			shouldCreateSession = weeksDiff%2 == 0 && current.Weekday() == startDate.Weekday()
 		case "custom":
 			weekday := int(current.Weekday())
-			for _, day := range customDays {
-				if day == weekday {
-					shouldCreateSession = true
-					break
-				}
+			if normalizedDays[weekday] {
+				shouldCreateSession = true
+			}
+		case "none":
+			// One-off / non-recurring schedule: create only the first session
+			if sessionNumber == 1 {
+				shouldCreateSession = true
 			}
 		}
 
@@ -156,7 +173,30 @@ func GenerateScheduleSessions(schedule models.Schedules, sessionStartTime string
 	// คำนวณ sessions ที่ต้องการทั้งหมด
 	totalSessions := schedule.Total_hours / schedule.Hours_per_session
 
-	for sessionNumber <= totalSessions && (current.Before(schedule.Estimated_end_date) || current.Equal(schedule.Estimated_end_date)) {
+	// Determine an end guard: if Estimated_end_date is zero, derive a soft cap by days to cover required sessions
+	// Assume max of 365 days lookahead to avoid infinite loop when no end date provided.
+	hasEndDate := !schedule.Estimated_end_date.IsZero()
+	softEnd := schedule.Start_date.AddDate(1, 0, 0) // one year cap
+
+	// Normalize custom days for this generator as well
+	normalizedDays := make(map[int]bool, len(customDays))
+	for _, d := range customDays {
+		if d == 7 {
+			d = 0
+		}
+		if d < 0 {
+			d = 0
+		}
+		if d > 6 {
+			d = d % 7
+		}
+		normalizedDays[d] = true
+	}
+
+	// Use Asia/Bangkok timezone for consistent date handling
+	bangkokLoc, _ := time.LoadLocation("Asia/Bangkok")
+
+	for sessionNumber <= totalSessions && ((hasEndDate && (current.Before(schedule.Estimated_end_date) || current.Equal(schedule.Estimated_end_date))) || (!hasEndDate && current.Before(softEnd))) {
 		shouldCreateSession := false
 
 		switch schedule.Recurring_pattern {
@@ -171,26 +211,27 @@ func GenerateScheduleSessions(schedule models.Schedules, sessionStartTime string
 			shouldCreateSession = current.Day() == schedule.Start_date.Day()
 		case "custom":
 			weekday := int(current.Weekday())
-			for _, day := range customDays {
-				if day == weekday {
-					shouldCreateSession = true
-					break
-				}
+			if normalizedDays[weekday] {
+				shouldCreateSession = true
+			}
+		case "none":
+			// One-off / non-recurring schedule: create only the first session
+			if sessionNumber == 1 {
+				shouldCreateSession = true
 			}
 		}
 
 		if shouldCreateSession {
+			// Use the specific date for session, maintaining consistent timezone
+			sessionDate := time.Date(current.Year(), current.Month(), current.Day(), 0, 0, 0, 0, bangkokLoc)
 			sessionStart := time.Date(current.Year(), current.Month(), current.Day(),
-				startTime.Hour(), startTime.Minute(), 0, 0, current.Location())
+				startTime.Hour(), startTime.Minute(), 0, 0, bangkokLoc)
 			sessionEnd := sessionStart.Add(time.Duration(schedule.Hours_per_session) * time.Hour)
 
-			sd := current
-			ss := sessionStart
-			se := sessionEnd
 			session := models.Schedule_Sessions{
-				Session_date:          &sd,
-				Start_time:            &ss,
-				End_time:              &se,
+				Session_date:          &sessionDate,
+				Start_time:            &sessionStart,
+				End_time:              &sessionEnd,
 				Session_number:        sessionNumber,
 				Week_number:           weekNumber,
 				Status:                "scheduled",
