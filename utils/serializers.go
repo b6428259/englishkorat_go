@@ -80,6 +80,7 @@ type NotificationDTO struct {
 	MessageTh string      `json:"message_th,omitempty"`
 	Type      string      `json:"type"`
 	Channels  []string    `json:"channels,omitempty"`
+	Data      interface{} `json:"data,omitempty"`
 	Read      bool        `json:"read"`
 	ReadAt    *time.Time  `json:"read_at,omitempty"`
 	User      UserShort   `json:"user"`
@@ -164,6 +165,12 @@ func ToNotificationDTO(n models.Notification) NotificationDTO {
 
 	recipient := Recipient{Type: "user", ID: n.UserID}
 
+	// Parse data JSON into generic object if present
+	var dataObj interface{}
+	if !n.Data.IsNull() {
+		_ = json.Unmarshal(n.Data, &dataObj)
+	}
+
 	return NotificationDTO{
 		ID:        n.ID,
 		CreatedAt: n.CreatedAt,
@@ -175,6 +182,7 @@ func ToNotificationDTO(n models.Notification) NotificationDTO {
 		MessageTh: n.MessageTh,
 		Type:      n.Type,
 		Channels:  channels,
+		Data:      dataObj,
 		Read:      n.Read,
 		ReadAt:    n.ReadAt,
 		User:      us,
@@ -326,4 +334,130 @@ func ToGroupDTOs(src []models.Group) []GroupDTO {
 		out = append(out, ToGroupDTO(g))
 	}
 	return out
+}
+
+// ---- Schedule Detail DTOs ----
+
+// UserBasic is a compact representation commonly used in schedule/session DTOs.
+type UserBasic struct {
+	ID       uint   `json:"id"`
+	Username string `json:"username,omitempty"`
+	Avatar   string `json:"avatar,omitempty"`
+}
+
+// RoomShort is a compact room representation.
+type RoomShort struct {
+	ID   *uint  `json:"id"`
+	Name string `json:"name,omitempty"`
+}
+
+// SessionDTO is a normalized session response without deep nested GORM structs.
+type SessionDTO struct {
+	ID            uint      `json:"id"`
+	ScheduleID    uint      `json:"schedule_id"`
+	Date          string    `json:"date"`       // YYYY-MM-DD
+	StartTime     string    `json:"start_time"` // HH:MM
+	EndTime       string    `json:"end_time"`   // HH:MM
+	Status        string    `json:"status"`
+	SessionNumber int       `json:"session_number"`
+	WeekNumber    int       `json:"week_number"`
+	IsMakeup      bool      `json:"is_makeup"`
+	Notes         string    `json:"notes,omitempty"`
+	Teacher       UserBasic `json:"teacher"`
+	Room          RoomShort `json:"room"`
+}
+
+// ParticipantDTO represents a participant in non-class schedules.
+type ParticipantDTO struct {
+	UserID uint      `json:"user_id"`
+	Role   string    `json:"role"`
+	Status string    `json:"status"`
+	User   UserBasic `json:"user"`
+}
+
+// ScheduleDetailDTO is the normalized schedule detail payload.
+type ScheduleDetailDTO struct {
+	ID               uint             `json:"id"`
+	CreatedAt        *time.Time       `json:"created_at"`
+	UpdatedAt        *time.Time       `json:"updated_at"`
+	ScheduleName     string           `json:"schedule_name"`
+	ScheduleType     string           `json:"schedule_type"`
+	Status           string           `json:"status"`
+	RecurringPattern string           `json:"recurring_pattern"`
+	TotalHours       int              `json:"total_hours"`
+	HoursPerSession  int              `json:"hours_per_session"`
+	SessionPerWeek   int              `json:"session_per_week"`
+	StartDate        time.Time        `json:"start_date"`
+	EstimatedEndDate time.Time        `json:"estimated_end_date"`
+	Notes            string           `json:"notes,omitempty"`
+	AutoReschedule   bool             `json:"auto_reschedule"`
+	CreatedBy        *UserBasic       `json:"created_by,omitempty"`
+	DefaultTeacher   *UserBasic       `json:"default_teacher,omitempty"`
+	DefaultRoom      *RoomShort       `json:"default_room,omitempty"`
+	Group            *GroupDTO        `json:"group,omitempty"`
+	Participants     []ParticipantDTO `json:"participants,omitempty"`
+	Sessions         []SessionDTO     `json:"sessions"`
+}
+
+// ToSessionDTO converts Schedule_Sessions to SessionDTO with sensible fallbacks.
+func ToSessionDTO(s models.Schedule_Sessions, defaultTeacher *models.User, defaultRoom *models.Room) SessionDTO {
+	// helpers for safe formatting
+	format := func(t *time.Time, layout string) string {
+		if t == nil {
+			return ""
+		}
+		return t.Format(layout)
+	}
+
+	// teacher fallback
+	var teacher models.User
+	if s.AssignedTeacher != nil && s.AssignedTeacher.ID != 0 {
+		teacher = *s.AssignedTeacher
+	} else if defaultTeacher != nil {
+		teacher = *defaultTeacher
+	}
+	tBasic := UserBasic{}
+	if teacher.ID != 0 {
+		tBasic = UserBasic{ID: teacher.ID, Username: teacher.Username, Avatar: teacher.Avatar}
+	}
+
+	// room fallback
+	var rID *uint
+	rName := ""
+	if s.Room != nil && s.Room.ID != 0 {
+		rID = &s.Room.ID
+		rName = s.Room.RoomName
+	} else if defaultRoom != nil && defaultRoom.ID != 0 {
+		rID = &defaultRoom.ID
+		rName = defaultRoom.RoomName
+	}
+
+	return SessionDTO{
+		ID:            s.ID,
+		ScheduleID:    s.ScheduleID,
+		Date:          format(s.Session_date, "2006-01-02"),
+		StartTime:     format(s.Start_time, "15:04"),
+		EndTime:       format(s.End_time, "15:04"),
+		Status:        s.Status,
+		SessionNumber: s.Session_number,
+		WeekNumber:    s.Week_number,
+		IsMakeup:      s.Is_makeup,
+		Notes:         s.Notes,
+		Teacher:       tBasic,
+		Room:          RoomShort{ID: rID, Name: rName},
+	}
+}
+
+// ToParticipantDTO converts ScheduleParticipant to ParticipantDTO.
+func ToParticipantDTO(p models.ScheduleParticipant) ParticipantDTO {
+	ub := UserBasic{}
+	if p.User.ID != 0 {
+		ub = UserBasic{ID: p.User.ID, Username: p.User.Username, Avatar: p.User.Avatar}
+	}
+	return ParticipantDTO{
+		UserID: p.UserID,
+		Role:   p.Role,
+		Status: p.Status,
+		User:   ub,
+	}
 }

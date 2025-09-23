@@ -538,7 +538,7 @@ PATCH /api/bills/:id
 Content-Type: application/json
 
 {
-  "status": "record",
+  "status": "Unpaid",
   "due_date": "2025-10-01",
   "paid_date": "2025-09-25",
   "notes_memo": "paid via transfer",

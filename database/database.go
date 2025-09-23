@@ -37,12 +37,26 @@ func connectDatabase() {
 		gormLogger = logger.Default.LogMode(logger.Silent)
 	}
 
+	// Configure GORM to use application timezone for NowFunc (affects CreatedAt/UpdatedAt timestamps)
+	appTZ := config.AppConfig.DBTimeZone
+	if strings.TrimSpace(appTZ) == "" {
+		appTZ = "Asia/Bangkok"
+	}
+	loc, locErr := time.LoadLocation(appTZ)
+	if locErr != nil {
+		log.Printf("Warning: failed to load DBTimeZone '%s': %v; falling back to Asia/Bangkok", appTZ, locErr)
+		loc, _ = time.LoadLocation("Asia/Bangkok")
+	}
+
 	// Retry logic for transient tunnel issues
 	var lastErr error
 	for attempt := 1; attempt <= 8; attempt++ { // 8 attempts ~ exponential backoff up to ~30s total
 		DB, err = gorm.Open(mysql.Open(dsn), &gorm.Config{
 			Logger:                                   gormLogger,
 			DisableForeignKeyConstraintWhenMigrating: false,
+			NowFunc: func() time.Time {
+				return time.Now().In(loc)
+			},
 		})
 		if err == nil {
 			break
@@ -66,6 +80,15 @@ func connectDatabase() {
 	sqlDB.SetMaxIdleConns(10)
 	sqlDB.SetMaxOpenConns(50)
 	sqlDB.SetConnMaxLifetime(55 * time.Minute)
+
+	// Ensure MySQL session time_zone is set to +07:00 for consistency with Asia/Bangkok
+	// This affects functions like NOW() on the DB side.
+	// Best-effort: ignore error but log it.
+	if _, err := sqlDB.Exec("SET time_zone = '+07:00'"); err != nil {
+		log.Printf("Warning: failed to set MySQL session time_zone to +07:00: %v", err)
+	} else {
+		log.Println("MySQL session time_zone set to +07:00")
+	}
 
 	// Auto migrate (can be skipped via config.SkipMigrate)
 	skip := false

@@ -327,9 +327,11 @@ type Notification struct {
 	// Channels defines how to deliver/display this notification on the client side
 	// Allowed values: "normal", "popup", "line". Can contain multiple.
 	// Note: MySQL JSON columns cannot have a DB-level DEFAULT. We set the default at insert time in code.
-	Channels JSON       `json:"channels" gorm:"type:json"`
-	Read     bool       `json:"read" gorm:"default:false"`
-	ReadAt   *time.Time `json:"read_at"`
+	Channels JSON `json:"channels" gorm:"type:json"`
+	// Data contains optional structured payload for deep-links or actions (e.g., links to sessions)
+	Data   JSON       `json:"data,omitempty" gorm:"type:json"`
+	Read   bool       `json:"read" gorm:"default:false"`
+	ReadAt *time.Time `json:"read_at"`
 
 	// Relationships
 	User User `json:"user,omitempty" gorm:"foreignKey:UserID"`
@@ -567,7 +569,9 @@ type Bill struct {
 	// Derived metadata
 	PaymentMethod string `json:"payment_method" gorm:"size:20;type:enum('cash','debit_card','credit_card','transfer','other','unknown');default:'unknown'"`
 	Currency      string `json:"currency" gorm:"size:10"`
-	Status        string `json:"status" gorm:"size:50;default:'record'"` // record, reconciled, etc
+	// Status represents the reconciliation/payment state of the bill.
+	// Allowed values: 'Paid', 'Unpaid', 'Overdue', 'Partially Paid'
+	Status string `json:"status" gorm:"size:50;default:'Unpaid';type:enum('Paid','Unpaid','Overdue','Partially Paid')"`
 
 	// Optional due/paid dates (if applicable)
 	DueDate  *time.Time `json:"due_date"`

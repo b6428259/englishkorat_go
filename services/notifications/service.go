@@ -31,6 +31,7 @@ type queuedNotification struct {
 	MessageTh string    `json:"message_th"`
 	Type      string    `json:"type"`
 	Channels  []string  `json:"channels,omitempty"`
+	Data      any       `json:"data,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -102,6 +103,12 @@ func QueuedForController(title, titleTh, message, messageTh, typ string, channel
 	return queuedNotification{Title: title, TitleTh: titleTh, Message: message, MessageTh: messageTh, Type: typ, Channels: ch}
 }
 
+// QueuedWithData allows attaching a structured data payload (deep-links/actions)
+func QueuedWithData(title, titleTh, message, messageTh, typ string, data any, channels ...string) queuedNotification {
+	ch := normalizeChannels(channels)
+	return queuedNotification{Title: title, TitleTh: titleTh, Message: message, MessageTh: messageTh, Type: typ, Channels: ch, Data: data}
+}
+
 // EnqueueOrCreate stores notifications using Redis queue if enabled, else direct insert.
 func (s *Service) EnqueueOrCreate(userIDs []uint, n queuedNotification) error {
 	if len(userIDs) == 0 {
@@ -139,6 +146,13 @@ func (s *Service) createDirect(userIDs []uint, n queuedNotification) error {
 	if err != nil {
 		channelsJSON = []byte(`["normal"]`)
 	}
+	// marshal data if provided
+	var dataJSON []byte
+	if n.Data != nil {
+		if b, err2 := json.Marshal(n.Data); err2 == nil {
+			dataJSON = b
+		}
+	}
 	for _, uid := range userIDs {
 		notifs = append(notifs, models.Notification{
 			UserID:    uid,
@@ -149,6 +163,7 @@ func (s *Service) createDirect(userIDs []uint, n queuedNotification) error {
 			Type:      n.Type,
 			Read:      false,
 			Channels:  channelsJSON,
+			Data:      dataJSON,
 		})
 	}
 

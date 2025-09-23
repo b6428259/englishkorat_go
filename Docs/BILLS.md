@@ -25,6 +25,12 @@ This guide explains the bills import pipeline (from Wave), the native Bills API,
 - Derived: `payment_method` (enum: `cash`, `debit_card`, `credit_card`, `transfer`, `other`, `unknown`), `currency`, `status`, `due_date`, `paid_date`.
 - `raw` (json): Original row capture for traceability.
 
+Bill status values:
+- `Paid` - the bill has been fully paid and reconciled.
+- `Unpaid` - the bill is recorded but not yet paid. (default for manual bills)
+- `Overdue` - the bill has passed its due date and remains unpaid.
+- `Partially Paid` - some payment(s) have been made but the bill is not fully settled.
+
 ## Deterministic Transaction ID
 
 The internal `transaction_id` is generated to group lines from the same bill:

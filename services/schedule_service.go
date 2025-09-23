@@ -8,6 +8,7 @@ import (
 
 	"englishkorat_go/database"
 	"englishkorat_go/models"
+	notifsvc "englishkorat_go/services/notifications"
 )
 
 // HolidayResponse represents the Thai holiday API response
@@ -388,8 +389,8 @@ func NotifyUpcomingClass(sessionID uint, minutesBefore int) {
 		return
 	}
 
-	// ตรวจสอบว่า session ได้รับการยืนยันแล้ว
-	if session.Status != "confirmed" {
+	// ตรวจสอบว่า session ได้รับการยืนยันแล้ว (ในระบบนี้ถือว่า 'scheduled' คือยืนยันแล้ว)
+	if session.Status != "scheduled" {
 		return
 	}
 
@@ -467,7 +468,7 @@ func ScheduleNotifications() {
 	tomorrow := now.AddDate(0, 0, 1)
 
 	err := database.DB.Where("session_date BETWEEN ? AND ? AND status = ?",
-		now.Format("2006-01-02"), tomorrow.Format("2006-01-02"), "confirmed").
+		now.Format("2006-01-02"), tomorrow.Format("2006-01-02"), "scheduled").
 		Find(&sessions).Error
 	if err != nil {
 		return
@@ -487,6 +488,69 @@ func ScheduleNotifications() {
 					NotifyUpcomingClass(sessionID, mins)
 				}(session.ID, minutes, notifyTime)
 			}
+		}
+	}
+}
+
+// ScheduleTeacherConfirmReminders schedules reminder notifications for a class session
+// to prompt the assigned/default teacher to confirm at T-24h and T-6h before start.
+func ScheduleTeacherConfirmReminders(session models.Schedule_Sessions, schedule models.Schedules) {
+	// Only for class schedules and sessions in 'assigned' status
+	if schedule.ScheduleType != "class" {
+		return
+	}
+	if session.Status != "assigned" {
+		return
+	}
+	if session.Start_time == nil || session.Session_date == nil {
+		return
+	}
+
+	// Determine teacher to notify (session-level or schedule default)
+	teacherID := session.AssignedTeacherID
+	if teacherID == nil {
+		teacherID = schedule.DefaultTeacherID
+	}
+	if teacherID == nil {
+		return
+	}
+
+	// Calculate absolute start datetime in Asia/Bangkok
+	// Session.Start_time already has correct date/time; use it directly
+	startAt := *session.Start_time
+	now := time.Now()
+
+	// Reminder offsets (hours before)
+	offsets := []time.Duration{24 * time.Hour, 6 * time.Hour}
+
+	notifService := notifsvc.NewService()
+	for _, off := range offsets {
+		notifyAt := startAt.Add(-off)
+		if notifyAt.After(now) {
+			// schedule a goroutine sleep; in production, prefer a durable scheduler/queue
+			go func(teacher uint, sess models.Schedule_Sessions, sch models.Schedules, when time.Time) {
+				time.Sleep(time.Until(when))
+				// double-check status still 'assigned' before sending
+				var latest models.Schedule_Sessions
+				if err := database.DB.First(&latest, sess.ID).Error; err == nil && latest.Status == "assigned" {
+					// Build notification
+					data := map[string]any{
+						"link":        map[string]any{"href": fmt.Sprintf("/api/schedules/sessions/%d", sess.ID), "method": "GET"},
+						"action":      "confirm-session",
+						"session_id":  sess.ID,
+						"schedule_id": sch.ID,
+					}
+					payload := notifsvc.QueuedWithData(
+						"Please confirm your session",
+						"กรุณายืนยันคาบเรียนของคุณ",
+						fmt.Sprintf("Please confirm the session for '%s' at %s.", sch.ScheduleName, startAt.Format("2006-01-02 15:04")),
+						fmt.Sprintf("กรุณายืนยันคาบเรียนสำหรับ '%s' เวลา %s", sch.ScheduleName, startAt.Format("2006-01-02 15:04")),
+						"info", data,
+						"popup", "normal",
+					)
+					_ = notifService.EnqueueOrCreate([]uint{teacher}, payload)
+				}
+			}(*teacherID, session, schedule, notifyAt)
 		}
 	}
 }

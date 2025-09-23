@@ -66,7 +66,7 @@ func (ns *NotificationScheduler) CheckUpcomingSessions() {
 
 		var sessions []models.Schedule_Sessions
 		err := ns.db.
-			Where("start_time BETWEEN ? AND ? AND status = ?", startRange, endRange, "confirmed").
+			Where("start_time BETWEEN ? AND ? AND status = ?", startRange, endRange, "scheduled").
 			Find(&sessions).Error
 		if err != nil {
 			fmt.Printf("Error checking upcoming sessions: %v\n", err)
@@ -187,7 +187,17 @@ func (ns *NotificationScheduler) sendUpcomingClassNotification(session models.Sc
 		msgTh := fmt.Sprintf("คลาส '%s' ของคุณจะเริ่มในอีก %s เวลา %s",
 			schedule.ScheduleName, ns.translateTimeLabel(timeLabel), startLabel)
 
-		q := notifsvc.QueuedForController(title, titleTh, msg, msgTh, "info", "normal", "popup")
+		data := map[string]interface{}{
+			"link": map[string]interface{}{
+				"href":   fmt.Sprintf("/api/schedules/sessions/%d", session.ID),
+				"method": "GET",
+			},
+			"action":                  "open-session",
+			"session_id":              session.ID,
+			"schedule_id":             schedule.ID,
+			"reminder_before_minutes": minutes,
+		}
+		q := notifsvc.QueuedWithData(title, titleTh, msg, msgTh, "info", data, "normal", "popup")
 		if err := ns.ns.EnqueueOrCreate(userIDs, q); err != nil {
 			fmt.Printf("Error creating notifications for session %d: %v\n", session.ID, err)
 		}
@@ -218,7 +228,7 @@ func (ns *NotificationScheduler) SendDailyScheduleReminder() {
 	// หา sessions ที่จะเกิดขึ้นวันนี้และพรุ่งนี้
 	var sessions []models.Schedule_Sessions
 	err := ns.db.Where("session_date BETWEEN ? AND ? AND status = ?",
-		today.Format("2006-01-02"), tomorrow.Format("2006-01-02"), "confirmed").
+		today.Format("2006-01-02"), tomorrow.Format("2006-01-02"), "scheduled").
 		Preload("Schedule").
 		Preload("Schedule.Group").
 		Preload("Schedule.Group.Course").
@@ -298,7 +308,10 @@ func (ns *NotificationScheduler) sendDailyReminderNotification(userID uint, sess
 			session.Start_time.Format("15:04"))
 	}
 
-	q := notifsvc.QueuedForController("Daily Schedule Reminder", "เตือนตารางเรียนประจำวัน", messageEn, messageTh, "info", "normal", "popup")
+	data := map[string]interface{}{
+		"action": "open-today-schedule",
+	}
+	q := notifsvc.QueuedWithData("Daily Schedule Reminder", "เตือนตารางเรียนประจำวัน", messageEn, messageTh, "info", data, "normal", "popup")
 	if err := ns.ns.EnqueueOrCreate([]uint{userID}, q); err != nil {
 		fmt.Printf("Error creating daily reminder for user %d: %v\n", userID, err)
 	}
@@ -310,7 +323,7 @@ func (ns *NotificationScheduler) CheckMissedSessions() {
 	pastTime := now.Add(-30 * time.Minute) // ตรวจสอบ sessions ที่ผ่านมา 30 นาที
 
 	var sessions []models.Schedule_Sessions
-	err := ns.db.Where("start_time < ? AND status = ?", pastTime, "confirmed").
+	err := ns.db.Where("start_time < ? AND status = ?", pastTime, "scheduled").
 		Preload("Schedule").
 		Find(&sessions).Error
 	if err != nil {
@@ -355,7 +368,16 @@ func (ns *NotificationScheduler) sendMissedSessionNotification(session models.Sc
 	msgTh := fmt.Sprintf("Session '%s' วันที่ %s พลาด (no-show)",
 		session.Schedule.ScheduleName, dateLabel)
 
-	q := notifsvc.QueuedForController(title, titleTh, msg, msgTh, "warning", "normal", "popup")
+	data := map[string]interface{}{
+		"link": map[string]interface{}{
+			"href":   fmt.Sprintf("/api/schedules/sessions/%d", session.ID),
+			"method": "GET",
+		},
+		"action":      "review-missed-session",
+		"session_id":  session.ID,
+		"schedule_id": session.ScheduleID,
+	}
+	q := notifsvc.QueuedWithData(title, titleTh, msg, msgTh, "warning", data, "normal", "popup")
 	if err := ns.ns.EnqueueOrCreate(userIDs, q); err != nil {
 		fmt.Printf("Error creating missed-session notifications: %v\n", err)
 	}

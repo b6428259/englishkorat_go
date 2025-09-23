@@ -2,6 +2,7 @@ package config
 
 import (
 	"log"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ type Config struct {
 	DBUser     string
 	DBPassword string
 	DBName     string
+	DBTimeZone string
 
 	// Redis
 	RedisHost     string
@@ -37,6 +39,7 @@ type Config struct {
 	S3BucketName       string
 
 	// Server
+	IP     string
 	Port   string
 	AppEnv string
 
@@ -50,12 +53,21 @@ type Config struct {
 
 	// Feature Toggles
 	UseRedisNotifications bool
-	SkipMigrate          bool
-	PruneColumns         bool
+	SkipMigrate           bool
+	PruneColumns          bool
 }
 
 func (c *Config) GetDSN() string {
-	return c.DBUser + ":" + c.DBPassword + "@tcp(" + c.DBHost + ":" + c.DBPort + ")/" + c.DBName + "?charset=utf8mb4&parseTime=True&loc=Local"
+	// Use DBTimeZone to control how DATETIME/TIMESTAMP are parsed (no-TZ values use this location)
+	tz := c.DBTimeZone
+	if strings.TrimSpace(tz) == "" {
+		tz = "Asia/Bangkok"
+	}
+	// url-encode timezone (e.g., Asia/Bangkok => Asia%2FBangkok)
+	tzParam := url.QueryEscape(tz)
+	// Also set MySQL session time_zone for each pooled connection (driver will run SET time_zone = '...')
+	tzSession := url.QueryEscape("'" + tz + "'")
+	return c.DBUser + ":" + c.DBPassword + "@tcp(" + c.DBHost + ":" + c.DBPort + ")/" + c.DBName + "?charset=utf8mb4&parseTime=True&loc=" + tzParam + "&time_zone=" + tzSession
 }
 
 var AppConfig *Config
@@ -136,6 +148,7 @@ func LoadConfig() {
 		DBUser:     getVal("DB_USER", "root"),
 		DBPassword: getVal("DB_PASSWORD", ""),
 		DBName:     getVal("DB_NAME", "englishkorat_go"),
+		DBTimeZone: getVal("DB_TIMEZONE", "Asia/Bangkok"),
 
 		RedisHost:     getVal("REDIS_HOST", "localhost"),
 		RedisPort:     getVal("REDIS_PORT", "6379"),
@@ -149,6 +162,7 @@ func LoadConfig() {
 		AWSSecretAccessKey: getVal("AWS_SECRET_ACCESS_KEY", ""),
 		S3BucketName:       getVal("S3_BUCKET_NAME", "englishkorat-storage"),
 
+		IP:     getVal("IP", "0.0.0.0"),
 		Port:   getVal("PORT", "3000"),
 		AppEnv: getVal("APP_ENV", "development"),
 
@@ -159,8 +173,8 @@ func LoadConfig() {
 		LogFile:  getVal("LOG_FILE", "logs/app.log"),
 
 		UseRedisNotifications: strings.ToLower(getVal("USE_REDIS_NOTIFICATIONS", "false")) == "true",
-		SkipMigrate:          strings.ToLower(getVal("SKIP_MIGRATE", "false")) == "true",
-		PruneColumns:         strings.ToLower(getVal("PRUNE_COLUMNS", "true")) == "true",
+		SkipMigrate:           strings.ToLower(getVal("SKIP_MIGRATE", "false")) == "true",
+		PruneColumns:          strings.ToLower(getVal("PRUNE_COLUMNS", "true")) == "true",
 	}
 
 	validateConfig(AppConfig, useSSM)

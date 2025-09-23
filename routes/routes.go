@@ -1,8 +1,10 @@
 package routes
 
 import (
+	"englishkorat_go/config"
 	"englishkorat_go/controllers"
 	"englishkorat_go/middleware"
+	notifsvc "englishkorat_go/services/notifications"
 	"englishkorat_go/services/websocket"
 
 	"github.com/gofiber/fiber/v2"
@@ -41,6 +43,37 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	public.Get("/courses", courseController.GetCourses)
 	public.Get("/courses/:id", courseController.GetCourse)
 	public.Get("/courses/branch/:branch_id", courseController.GetCoursesByBranch)
+
+	// Dev-only: public test endpoint to send a popup notification to a user (no auth)
+	public.Post("/notifications/test", func(c *fiber.Ctx) error {
+		if config.AppConfig == nil || config.AppConfig.AppEnv != "development" {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Not allowed"})
+		}
+		var req struct {
+			UserID uint   `json:"user_id"`
+			Title  string `json:"title"`
+			Msg    string `json:"message"`
+		}
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		if req.UserID == 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "user_id required"})
+		}
+		title := req.Title
+		if title == "" {
+			title = "Test Popup"
+		}
+		msg := req.Msg
+		if msg == "" {
+			msg = "This is a test popup notification."
+		}
+		q := notifsvc.QueuedWithData(title, "ทดสอบป๊อปอัพ", msg, "นี่คือการแจ้งเตือนป๊อปอัพทดสอบ", "info", fiber.Map{"action": "test-popup"}, "popup", "normal")
+		if err := notifsvc.NewService().EnqueueOrCreate([]uint{req.UserID}, q); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send"})
+		}
+		return c.JSON(fiber.Map{"message": "queued"})
+	})
 
 	// Student Registration - PUBLIC endpoints
 	public.Post("/students/student-register", studentController.PublicRegisterStudent)
@@ -180,6 +213,10 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	schedules.Get("/sessions/:id", scheduleController.GetSession)                   // ดูรายละเอียดของ session
 	schedules.Patch("/sessions/:id/status", scheduleController.UpdateSessionStatus) // อัพเดทสถานะ session
 	schedules.Post("/sessions/makeup", scheduleController.CreateMakeupSession)      // สร้าง makeup session
+	// New: participant updates participation status for non-class schedules
+	schedules.Patch("/:id/participants/me", scheduleController.UpdateMyParticipationStatus)
+	// New: add a session into an existing schedule
+	schedules.Post("/:id/sessions", scheduleController.AddSessionToSchedule)
 
 	// Comment management
 	schedules.Post("/comments", scheduleController.AddComment) // เพิ่ม comment
@@ -187,6 +224,9 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 
 	// Calendar endpoint
 	schedules.Get("/calendar", middleware.RequireTeacherOrAbove(), scheduleController.GetCalendarView)
+
+	// Schedule detail (place after static paths to avoid collision with /teachers, /teacher, etc.)
+	schedules.Get("/:id", scheduleController.GetScheduleDetail)
 
 	// Group management routes
 	groups := protected.Group("/groups")

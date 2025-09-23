@@ -203,7 +203,7 @@ func (bc *BillsController) CreateBill(c *fiber.Ctx) error {
 				Customer:                   req.Customer,
 				Currency:                   req.Currency,
 				InvoiceNumber:              req.InvoiceNumber,
-				Status:                     "record",
+				Status:                     "Unpaid",
 			}
 			if err := tx.Create(&bill).Error; err != nil {
 				return err
@@ -245,7 +245,13 @@ func (bc *BillsController) PatchBill(c *fiber.Ctx) error {
 
 	updates := map[string]interface{}{}
 	if req.Status != nil {
-		updates["status"] = *req.Status
+		// validate status against allowed values
+		s := strings.TrimSpace(*req.Status)
+		allowed := map[string]bool{"Paid": true, "Unpaid": true, "Overdue": true, "Partially Paid": true}
+		if !allowed[s] {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid status value"})
+		}
+		updates["status"] = s
 	}
 	if req.NotesMemo != nil {
 		updates["notes_memo"] = *req.NotesMemo

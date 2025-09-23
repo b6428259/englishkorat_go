@@ -152,7 +152,7 @@ func main() {
 
 	// Start server (listen on all interfaces for Docker/production)
 	// Bind to 0.0.0.0 so the app accepts connections from Docker's mapped port
-	port := "0.0.0.0:" + config.AppConfig.Port
+	port := config.AppConfig.IP + ":" + config.AppConfig.Port
 	log.Printf("🚀 Server starting on port %s", config.AppConfig.Port)
 	log.Printf("📚 English Korat API v1.0.0")
 	log.Printf("🌍 Environment: %s", config.AppConfig.AppEnv)
