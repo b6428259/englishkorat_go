@@ -24,7 +24,6 @@ func CreateAbsence(groupID, sessionID, userID uint, reason string) (*models.Abse
         Reason:    reason,
         Status:    "pending",
         CreatedBy: userID,
-        CreatedAt: time.Now(),
     }
     if err := database.DB.Create(&absence).Error; err != nil {
         return nil, err

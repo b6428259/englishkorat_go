@@ -1,7 +1,10 @@
 package controllers
 
 import (
+    "englishkorat_go/models"     
+    "englishkorat_go/database"
     "englishkorat_go/services"
+
     "github.com/gofiber/fiber/v2"
 )
 
@@ -45,8 +48,8 @@ func (ac *AbsenceController) ApproveAbsence(c *fiber.Ctx) error {
 }
 
 func (ac *AbsenceController) GetAbsencesByGroup(c *fiber.Ctx) error {
-    groupID, err := c.QueryInt("group_id")
-    if err != nil || groupID == 0 {
+    groupID := c.Params("group_id") 
+    if groupID == "" {
         return c.Status(400).JSON(fiber.Map{"error": "group_id is required"})
     }
 
@@ -57,7 +60,7 @@ func (ac *AbsenceController) GetAbsencesByGroup(c *fiber.Ctx) error {
         Where("group_id = ?", groupID).
         Order("created_at DESC").
         Find(&absences).Error; err != nil {
-        return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+        return c.Status(500).JSON(fiber.Map{"error": "cannot fetch absences"})
     }
 
     return c.JSON(absences)

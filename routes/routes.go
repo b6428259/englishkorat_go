@@ -4,7 +4,6 @@ import (
 	"englishkorat_go/config"
 	"englishkorat_go/controllers"
 	"englishkorat_go/middleware"
-	"englishkorat_go/handlers"
 	notifsvc "englishkorat_go/services/notifications"
 	"englishkorat_go/services/websocket"
 
@@ -259,7 +258,7 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	absences := protected.Group("/absences", middleware.RequireOwnerOrAdmin(), absenceController.ApproveAbsence)
 	absences.Post("/", absenceController.CreateAbsence)                 // นักเรียนส่งคำขอลา
 	absences.Get("/", absenceController.GetAbsencesByGroup)             // นักเรียน / ครู / แอดมิน ดูประวัติลา
-	absences.Get("/", middleware.RequireTeacherOrAbove(), absenceController.GetAbsencesByGroup)
+	absences.Patch("/:id/approve", middleware.RequireOwnerOrAdmin(), absenceController.ApproveAbsence) // อนุมัติ / ปฏิเสธการลา
 	
 
 	// WebSocket routes
