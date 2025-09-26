@@ -142,6 +142,8 @@ func AutoMigrate() {
 		&models.Book{},
 		&models.ClassProgress{},
 		&models.Bill{},
+		&models.GroupLeaveQuota{},
+    	&models.Absence{},
 	}
 
 	// Pre-sanitize: fix invalid JSON in notifications.channels before altering column type
