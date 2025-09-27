@@ -98,6 +98,10 @@ func (ic *ClassProgressImportController) Import(c *fiber.Ctx) error {
 	hashedDefault, _ := utils.HashPassword(defaultPassword)
 
 	err = database.DB.Transaction(func(tx *gorm.DB) error {
+		studentCache := make(map[string]*models.Student)
+		teacherCache := make(map[string]*models.Teacher)
+		courseCache := make(map[string]*models.Course)
+		groupCache := make(map[string]*models.Group)
 		for i := 1; i < len(rows); i++ {
 			r := rows[i]
 			// Map fields safely
@@ -141,11 +145,17 @@ func (ic *ClassProgressImportController) Import(c *fiber.Ctx) error {
 			}
 			var course *models.Course
 			if courseName != "" {
-				cRec, cerr := findOrCreateCourse(tx, courseName, branchID, level)
-				if cerr != nil {
-					return cerr
+				cKey := courseCacheKey(courseName, branchID)
+				if cached, ok := courseCache[cKey]; ok && cached != nil {
+					course = cloneCoursePtr(cached)
+				} else {
+					cRec, cerr := findOrCreateCourse(tx, courseName, branchID, level)
+					if cerr != nil {
+						return cerr
+					}
+					course = cRec
+					courseCache[cKey] = cloneCoursePtr(cRec)
 				}
-				course = cRec
 			}
 
 			// Find or create Group by convention: FileName/Level or Student list. We'll use FileName if present + Level
@@ -153,31 +163,37 @@ func (ic *ClassProgressImportController) Import(c *fiber.Ctx) error {
 			groupName := buildGroupName(fileName, level, studentThs, studentEns)
 			var group *models.Group
 			if groupName != "" {
-				var gRec models.Group
-				if err := tx.Where("group_name = ?", groupName).First(&gRec).Error; err != nil {
-					if err == gorm.ErrRecordNotFound {
-						// Need course id; if nil, create a placeholder course
-						var courseID uint
-						if course != nil {
-							courseID = course.ID
-						} else {
-							// Generate a unique non-empty code for the placeholder course to satisfy unique constraint
-							placeholderCode := fmt.Sprintf("auto-%d", time.Now().UnixNano())
-							pc := models.Course{Name: fmt.Sprintf("Course for %s", groupName), Code: placeholderCode, BranchID: branchID, Level: level, Status: "active"}
-							if err := tx.Create(&pc).Error; err != nil {
+				gKey := groupCacheKey(groupName)
+				if cached, ok := groupCache[gKey]; ok && cached != nil {
+					group = cloneGroupPtr(cached)
+				} else {
+					var gRec models.Group
+					if err := tx.Where("group_name = ?", groupName).First(&gRec).Error; err != nil {
+						if err == gorm.ErrRecordNotFound {
+							// Need course id; if nil, create a placeholder course
+							var courseID uint
+							if course != nil {
+								courseID = course.ID
+							} else {
+								// Generate a unique non-empty code for the placeholder course to satisfy unique constraint
+								placeholderCode := fmt.Sprintf("auto-%d", time.Now().UnixNano())
+								pc := models.Course{Name: fmt.Sprintf("Course for %s", groupName), Code: placeholderCode, BranchID: branchID, Level: level, Status: "active"}
+								if err := tx.Create(&pc).Error; err != nil {
+									return err
+								}
+								courseID = pc.ID
+							}
+							gRec = models.Group{GroupName: groupName, CourseID: courseID, Level: level, Status: "active"}
+							if err := tx.Create(&gRec).Error; err != nil {
 								return err
 							}
-							courseID = pc.ID
-						}
-						gRec = models.Group{GroupName: groupName, CourseID: courseID, Level: level, Status: "active"}
-						if err := tx.Create(&gRec).Error; err != nil {
+						} else {
 							return err
 						}
-					} else {
-						return err
 					}
+					group = &gRec
+					groupCache[gKey] = cloneGroupPtr(&gRec)
 				}
-				group = &gRec
 			}
 
 			// Ensure Users/Students exist and are in the group (dedupe by nickname TH/EN or username)
@@ -195,8 +211,13 @@ func (ic *ClassProgressImportController) Import(c *fiber.Ctx) error {
 					username = fmt.Sprintf("student_%d_%d", time.Now().Unix(), i)
 				}
 
-				// 1) Try find existing student by Thai/English nicknames
-				existingStudent := findStudentByNicknames(tx, th, en)
+				// 1) Try find existing student by Thai/English nicknames with cache
+				cacheKey := studentCacheKey(th, en, branchID)
+				existingStudent, cacheHit := studentCache[cacheKey]
+				if !cacheHit {
+					existingStudent = cloneStudentPtr(findStudentByNicknames(tx, th, en, branchID))
+					studentCache[cacheKey] = existingStudent
+				}
 				var user models.User
 				var student models.Student
 
@@ -219,6 +240,7 @@ func (ic *ClassProgressImportController) Import(c *fiber.Ctx) error {
 						if err := tx.Model(&student).Update("user_id", user.ID).Error; err != nil {
 							return err
 						}
+						student.UserID = &user.ID
 					}
 				} else {
 					// 2) No existing student by nickname; find or create user by username
@@ -263,6 +285,9 @@ func (ic *ClassProgressImportController) Import(c *fiber.Ctx) error {
 					}
 				}
 
+				// Refresh cache with latest student record (including any new user link)
+				updateStudentCache(studentCache, student, th, en, branchID)
+
 				// Add to group as member
 				if group != nil {
 					var gm models.GroupMember
@@ -290,21 +315,37 @@ func (ic *ClassProgressImportController) Import(c *fiber.Ctx) error {
 			teacherName := get("Teacher")
 			var teacherID *uint
 			if teacherName != "" {
-				if t := findTeacherClosest(tx, teacherName); t != nil {
-					teacherID = &t.ID
+				tKey := teacherCacheKey(teacherName)
+				if cached, ok := teacherCache[tKey]; ok {
+					if cached != nil {
+						teacherID = &cached.ID
+					}
+				} else {
+					found := cloneTeacherPtr(findTeacherClosest(tx, teacherName))
+					teacherCache[tKey] = found
+					if found != nil {
+						teacherID = &found.ID
+					}
 				}
 			}
 
 			// Book mapping
 			bookRaw := get("Book")
+			bookName := normalizeBookName(bookRaw)
 			var bookID *uint
-			if bookRaw != "" {
+			if bookName != "" {
 				var b models.Book
-				if err := tx.Where("name = ?", bookRaw).First(&b).Error; err != nil {
+				if err := tx.Where("name = ?", bookName).First(&b).Error; err != nil {
 					if err == gorm.ErrRecordNotFound {
-						b = models.Book{Name: bookRaw}
+						b = models.Book{Name: bookName}
 						if err := tx.Create(&b).Error; err != nil {
-							return err
+							if isDuplicateEntryError(err) {
+								if err := tx.Where("name = ?", bookName).First(&b).Error; err != nil {
+									return err
+								}
+							} else {
+								return err
+							}
 						}
 					} else {
 						return err
@@ -720,6 +761,18 @@ func firstNonEmpty(a string, b string) string {
 	return b
 }
 
+func normalizeBookName(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	runes := []rune(raw)
+	if len(runes) > 255 {
+		runes = runes[:255]
+	}
+	return string(runes)
+}
+
 func firstNumber(s string) int {
 	s = strings.TrimSpace(s)
 	for _, part := range strings.Split(s, ",") {
@@ -802,6 +855,75 @@ func sanitizeFilename(name string) string {
 	name = strings.ReplaceAll(name, "/", "_")
 	name = strings.ReplaceAll(name, "..", "_")
 	return name
+}
+
+func studentCacheKey(th, en string, branchID uint) string {
+	return fmt.Sprintf("%s|%s|%d", strings.ToLower(strings.TrimSpace(th)), strings.ToLower(strings.TrimSpace(en)), branchID)
+}
+
+func cloneStudentPtr(src *models.Student) *models.Student {
+	if src == nil {
+		return nil
+	}
+	cp := *src
+	return &cp
+}
+
+func updateStudentCache(cache map[string]*models.Student, student models.Student, th, en string, branchID uint) {
+	clone := cloneStudentPtr(&student)
+	keys := []string{studentCacheKey(th, en, branchID)}
+	if strings.TrimSpace(th) != "" {
+		keys = append(keys, studentCacheKey(th, "", branchID))
+	}
+	if strings.TrimSpace(en) != "" {
+		keys = append(keys, studentCacheKey("", en, branchID))
+	}
+	for _, key := range keys {
+		cache[key] = clone
+	}
+}
+
+func teacherCacheKey(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+func cloneTeacherPtr(src *models.Teacher) *models.Teacher {
+	if src == nil {
+		return nil
+	}
+	cp := *src
+	return &cp
+}
+
+func courseCacheKey(name string, branchID uint) string {
+	return fmt.Sprintf("%s|%d", strings.ToLower(strings.TrimSpace(name)), branchID)
+}
+
+func cloneCoursePtr(src *models.Course) *models.Course {
+	if src == nil {
+		return nil
+	}
+	cp := *src
+	return &cp
+}
+
+func groupCacheKey(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+func cloneGroupPtr(src *models.Group) *models.Group {
+	if src == nil {
+		return nil
+	}
+	cp := *src
+	return &cp
+}
+
+func isDuplicateEntryError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "Duplicate entry")
 }
 
 // Build a stable group name from file name and level; fallback to student names
@@ -926,22 +1048,65 @@ func findTeacherClosest(tx *gorm.DB, key string) *models.Teacher {
 	return nil
 }
 
-// findStudentByNicknames tries to find a student by exact Thai or English nickname
-func findStudentByNicknames(tx *gorm.DB, th, en string) *models.Student {
-	var s models.Student
+// findStudentByNicknames tries to find a student by exact Thai or English nickname, scoping by branch when provided
+func findStudentByNicknames(tx *gorm.DB, th, en string, branchID uint) *models.Student {
 	th = strings.TrimSpace(th)
 	en = strings.TrimSpace(en)
-	if th != "" && en != "" {
-		if err := tx.Where("nickname_th = ? OR nickname_en = ?", th, en).First(&s).Error; err == nil {
-			return &s
+	if th == "" && en == "" {
+		return nil
+	}
+
+	students := queryStudentsByNickname(tx, th, en)
+	if len(students) == 0 {
+		return nil
+	}
+
+	if branchID == 0 {
+		return &students[0]
+	}
+
+	if matched := firstStudentInBranch(students, branchID); matched != nil {
+		return matched
+	}
+
+	return firstStudentWithoutBranch(students)
+}
+
+func queryStudentsByNickname(tx *gorm.DB, th, en string) []models.Student {
+	var students []models.Student
+	query := tx.Preload("User")
+	switch {
+	case th != "" && en != "":
+		query = query.Where("nickname_th = ? OR nickname_en = ?", th, en)
+	case th != "":
+		query = query.Where("nickname_th = ?", th)
+	default:
+		query = query.Where("nickname_en = ?", en)
+	}
+	if err := query.Find(&students).Error; err != nil {
+		return nil
+	}
+	return students
+}
+
+func firstStudentInBranch(students []models.Student, branchID uint) *models.Student {
+	for idx := range students {
+		s := &students[idx]
+		if s.UserID != nil && s.User.BranchID == branchID {
+			return s
 		}
-	} else if th != "" {
-		if err := tx.Where("nickname_th = ?", th).First(&s).Error; err == nil {
-			return &s
+		if s.PreferredBranchID != nil && *s.PreferredBranchID == branchID {
+			return s
 		}
-	} else if en != "" {
-		if err := tx.Where("nickname_en = ?", en).First(&s).Error; err == nil {
-			return &s
+	}
+	return nil
+}
+
+func firstStudentWithoutBranch(students []models.Student) *models.Student {
+	for idx := range students {
+		s := &students[idx]
+		if (s.UserID == nil || s.User.BranchID == 0) && s.PreferredBranchID == nil {
+			return s
 		}
 	}
 	return nil

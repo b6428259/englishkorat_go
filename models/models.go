@@ -416,6 +416,20 @@ type Schedules struct {
 	Sessions       []Schedule_Sessions `json:"sessions,omitempty" gorm:"foreignKey:ScheduleID"`
 }
 
+type ScheduleImport struct {
+	BaseModel
+	Source          string    `json:"source" gorm:"size:50;default:'schedulista'"`
+	Fingerprint     string    `json:"fingerprint" gorm:"size:64;uniqueIndex"`
+	AppointmentTime time.Time `json:"appointment_time" gorm:"not null"`
+	ProviderName    string    `json:"provider_name" gorm:"size:255"`
+	ServiceName     string    `json:"service_name" gorm:"size:255"`
+	ClientName      string    `json:"client_name" gorm:"size:255"`
+	BranchRaw       string    `json:"branch_raw" gorm:"size:255"`
+	CourseName      string    `json:"course_name" gorm:"size:255"`
+	ScheduleID      *uint     `json:"schedule_id" gorm:"index"`
+	SessionID       *uint     `json:"session_id" gorm:"index"`
+}
+
 type Schedules_or_Sessions_Comment struct {
 	BaseModel
 	ScheduleID *uint  `json:"schedule_id" gorm:"null:true"`

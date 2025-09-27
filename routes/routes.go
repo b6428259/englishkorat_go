@@ -27,6 +27,7 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	scheduleController := &controllers.ScheduleController{}
 	groupController := &controllers.GroupController{}
 	classProgressImportController := &controllers.ClassProgressImportController{}
+	scheduleImportController := &controllers.ScheduleImportController{}
 	billsImportController := &controllers.BillsImportController{}
 	billsController := &controllers.BillsController{}
 	wsController := controllers.NewWebSocketController(wsHub)
@@ -241,6 +242,7 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	imports := protected.Group("/import", middleware.RequireOwnerOrAdmin())
 	imports.Post("/class-progress", classProgressImportController.Import)
 	imports.Post("/class-progress/undo", classProgressImportController.Undo)
+	imports.Post("/schedules", scheduleImportController.Import)
 	imports.Post("/bills", billsImportController.Import)
 
 	// Bills management routes (financial data - restrict to owner/admin)

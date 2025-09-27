@@ -134,6 +134,7 @@ func AutoMigrate() {
 		&models.User_inCourse{},
 		&models.Schedules{},
 		&models.Schedule_Sessions{},
+		&models.ScheduleImport{},
 		&models.Schedules_or_Sessions_Comment{},
 		&models.ScheduleParticipant{},
 		&models.SessionConfirmation{},
