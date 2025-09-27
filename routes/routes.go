@@ -30,6 +30,7 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	scheduleImportController := &controllers.ScheduleImportController{}
 	billsImportController := &controllers.BillsImportController{}
 	billsController := &controllers.BillsController{}
+	absenceController := &controllers.AbsenceController{}
 	wsController := controllers.NewWebSocketController(wsHub)
 
 	// localhost:3000/api/auth/login
@@ -254,6 +255,13 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	bills.Post("/", billsController.CreateBill)
 	bills.Patch("/:id", billsController.PatchBill)
 	bills.Delete("/:id", billsController.DeleteBill)
+
+	// Absence routes
+	absences := protected.Group("/absences", middleware.RequireOwnerOrAdmin(), absenceController.ApproveAbsence)
+	absences.Post("/", absenceController.CreateAbsence)                 // นักเรียนส่งคำขอลา
+	absences.Get("/", absenceController.GetAbsencesByGroup)             // นักเรียน / ครู / แอดมิน ดูประวัติลา
+	absences.Patch("/:id/approve", middleware.RequireOwnerOrAdmin(), absenceController.ApproveAbsence) // อนุมัติ / ปฏิเสธการลา
+	
 
 	// WebSocket routes
 	ws := protected.Group("/ws")

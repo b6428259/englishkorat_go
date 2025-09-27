@@ -594,3 +594,31 @@ type Bill struct {
 	// Raw preserve
 	Raw JSON `json:"raw" gorm:"type:json"`
 }
+
+// ประวัติการลา
+type Absence struct {
+    BaseModel
+    GroupID   uint       `json:"group_id" gorm:"not null"`
+    SessionID uint       `json:"session_id" gorm:"not null"`
+    Reason    string     `json:"reason" gorm:"type:text"`
+    Status    string     `json:"status" gorm:"size:50;default:'approved';type:enum('approved','rejected','pending')"`
+    Note      string     `json:"note" gorm:"type:text"`
+	CreatedBy   uint      `json:"created_by" gorm:"not null"` // user_id ของนักเรียนที่ส่งเรื่อง
+	ApprovedBy  *uint     `json:"approved_by" gorm:"default:null"` // user_id ของแอดมินที่กดอนุมัติ
+    ApprovedAt  *time.Time `json:"approved_at"`
+	
+	// Relationship
+	Group   Group             `json:"group" gorm:"foreignKey:GroupID"`
+	Session Schedule_Sessions `json:"session" gorm:"foreignKey:SessionID"`
+}
+
+// จำนวนสิทธิ์การลาคงเหลือ
+type GroupLeaveQuota struct {
+	BaseModel
+    GroupID      uint      `gorm:"uniqueIndex;not null"` // ผูกกับกลุ่มเดียว
+    TotalQuota   int       `gorm:"not null"`             // สิทธิ์ลา รวม (เช่น 2)
+    UsedQuota    int       `gorm:"default:0"`            // สิทธิ์ที่ใช้ไปแล้ว
+    LastUsedAt *time.Time  `json:"last_used_at"`
+}
+
+

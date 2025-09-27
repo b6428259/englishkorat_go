@@ -49,12 +49,8 @@ func init() {
 	// ✅ Start Notification Scheduler
 	notificationScheduler := services.NewNotificationScheduler()
 	go notificationScheduler.StartScheduler()
-	// ✅ Start Daily 10:00 LINE Group Reminder
+	// ✅ Start Daily 11:00 LINE Group Reminder
 	go notificationScheduler.StartDailyScheduler()
-
-
-	log.Printf("🔍 LINE_CHANNEL_SECRET length: %d", len(os.Getenv("LINE_CHANNEL_SECRET")))
-	log.Printf("🔍 LINE_CHANNEL_ACCESS_TOKEN length: %d", len(os.Getenv("LINE_CHANNEL_ACCESS_TOKEN")))
 }
 
 func main() {
@@ -133,12 +129,6 @@ func main() {
 		log.Println("✅ LINE Webhook enabled at /line/webhook")
 	} else {
 		log.Println("⚠️ LINE Webhook disabled: Missing LINE_CHANNEL_SECRET or LINE_CHANNEL_ACCESS_TOKEN")
-	}
-
-	for _, r := range app.Stack() {
-		for _, route := range r {
-			log.Printf("📌 Registered route: %s %s", route.Method, route.Path)
-		}
 	}
 
 	// 404 handler

@@ -390,7 +390,7 @@ func (ns *NotificationScheduler) StartDailyScheduler() {
 	c := cron.New(cron.WithLocation(loc))
 
 	// ตั้ง job ให้รันทุกวันเวลา 10:00 น.
-	_, err := c.AddFunc("00 10 * * *", func() {
+	_, err := c.AddFunc("00 11 * * *", func() {
 		log.Println("⏰ Running daily LINE group reminder job...")
 
 		matcher := NewLineGroupMatcher()
