@@ -390,7 +390,7 @@ func (ns *NotificationScheduler) StartDailyScheduler() {
 	c := cron.New(cron.WithLocation(loc))
 
 	// ตั้ง job ให้รันทุกวันเวลา 10:00 น.
-	_, err := c.AddFunc("00 11 * * *", func() {
+	_, err := c.AddFunc("00 16 * * *", func() {
 		log.Println("⏰ Running daily LINE group reminder job...")
 
 		matcher := NewLineGroupMatcher()
@@ -437,10 +437,29 @@ func (ns *NotificationScheduler) sendDailyLineGroupReminders() {
 			continue
 		}
 
-		msg := fmt.Sprintf("📢 แจ้งเตือนตารางเรียนพรุ่งนี้\nกลุ่ม: %s\nเวลาเริ่ม: %s\nคลาส: %s",
+// 		teacherName := "ไม่พบข้อมูล"
+// if s.DefaultTeacher != nil {
+//     // ใช้ชื่อเล่นถ้ามี ไม่งั้น fallback เป็นชื่อจริง
+//     if s.DefaultTeacher.NicknameTh != "" {
+//         teacherName = s.DefaultTeacher.NicknameTh
+//     } else {
+//         teacherName = strings.TrimSpace(fmt.Sprintf("%s %s",
+//             s.DefaultTeacher.FirstNameTh, s.DefaultTeacher.LastNameTh))
+//     }
+// }
+
+		// Hardcode branch/room ชั่วคราว
+        branch := "สาขาโคราช"
+        room := "ห้อง A1"
+
+		msg := fmt.Sprintf("📢 แจ้งเตือนตารางเรียนพรุ่งนี้\nกลุ่ม: %s\nสาขา: %s\nคลาส: %s\nเวลาเริ่ม: %s\nห้องเรียน: %s\nหากต้องการแจ้งลา กรุณาติดต่อแอดมิน (0812345678)",
 			s.Group.GroupName,
-			s.Start_date.Format("15:04"),
+			branch,
 			s.ScheduleName,
+			s.Start_date.Format("15:04"),
+			//teacherName,
+			room,
+			
 		)
 
 		if err := lineSvc.SendLineMessageToGroup(lineGroup.GroupID, msg); err != nil {
