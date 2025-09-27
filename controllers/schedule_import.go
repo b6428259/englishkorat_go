@@ -765,7 +765,7 @@ func findOrCreateSchedule(tx *gorm.DB, bucket *scheduleBucket, group *models.Gro
 			return nil, false, err
 		}
 		schedule = models.Schedules{
-			ScheduleName:            bucket.Key.ServiceName,
+			ScheduleName:            bucket.Key.ClientName,
 			ScheduleType:            "class",
 			GroupID:                 &group.ID,
 			Recurring_pattern:       "none",

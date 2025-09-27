@@ -257,10 +257,11 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	bills.Delete("/:id", billsController.DeleteBill)
 
 	// Absence routes
-	absences := protected.Group("/absences", middleware.RequireOwnerOrAdmin(), absenceController.ApproveAbsence)
-	absences.Post("/", absenceController.CreateAbsence)                 // นักเรียนส่งคำขอลา
-	absences.Get("/", absenceController.GetAbsencesByGroup)             // นักเรียน / ครู / แอดมิน ดูประวัติลา
-	absences.Patch("/:id/approve", middleware.RequireOwnerOrAdmin(), absenceController.ApproveAbsence) // อนุมัติ / ปฏิเสธการลา
+	absences := protected.Group("/absences")
+	absences.Post("/", middleware.RequireOwnerOrAdmin(), absenceController.CreateAbsence)                 // นักเรียนส่งคำขอลา
+	absences.Get("/", middleware.RequireTeacherOrAbove(), absenceController.GetAbsences)                   // นักเรียน / ครู / แอดมิน ดูประวัติลา
+	absences.Get("/:id", middleware.RequireOwnerOrAdmin(), absenceController.GetAbsencesByGroup)             // ดูรายละเอียดการลา
+	// absences.Patch("/:id/approve", middleware.RequireOwnerOrAdmin(), absenceController.ApproveAbsence) // อนุมัติ / ปฏิเสธการลา
 	
 
 	// WebSocket routes
