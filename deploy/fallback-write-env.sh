@@ -22,35 +22,57 @@ pick() {
 	return 1
 }
 
-# Read from environment (first try non-prod prefix, then PROD_* as fallback)
-DB_HOST=$(pick "${DB_HOST:-}" "${PROD_DB_HOST:-}") || true
-DB_PORT=$(pick "${DB_PORT:-}" "${PROD_DB_PORT:-}") || true
-DB_USER=$(pick "${DB_USER:-}" "${PROD_DB_USER:-}") || true
-DB_PASSWORD=$(pick "${DB_PASSWORD:-}" "${PROD_DB_PASSWORD:-}") || true
-DB_NAME=$(pick "${DB_NAME:-}" "${PROD_DB_NAME:-}") || true
+# Support dynamic STAGE-based prefix mapping. For STAGE=uat we will also attempt UAT_DB_HOST, etc.
+STAGE_UPPER=$(echo "${STAGE:-}" | tr '[:lower:]' '[:upper:]')
+
+# Helper to read a var considering stage + PROD fallback + base
+stage_pick() {
+	local base="$1"; shift || true
+	local val=""
+	# 1. explicit var (e.g., DB_HOST)
+	val=${!base:-}
+	if [ -n "$val" ]; then printf '%s' "$val"; return 0; fi
+	# 2. stage-specific (e.g., UAT_DB_HOST)
+	if [ -n "$STAGE_UPPER" ]; then
+		local stageVar="${STAGE_UPPER}_${base}"
+		val=${!stageVar:-}
+		if [ -n "$val" ]; then printf '%s' "$val"; return 0; fi
+	fi
+	# 3. PROD_ fallback (historical naming)
+	local prodVar="PROD_${base}"
+	val=${!prodVar:-}
+	if [ -n "$val" ]; then printf '%s' "$val"; return 0; fi
+	return 1
+}
+
+DB_HOST=$(stage_pick DB_HOST) || true
+DB_PORT=$(stage_pick DB_PORT) || true
+DB_USER=$(stage_pick DB_USER) || true
+DB_PASSWORD=$(stage_pick DB_PASSWORD) || true
+DB_NAME=$(stage_pick DB_NAME) || true
 
 # Defaults (tuned to repo conventions and compose setup)
 DB_PORT=${DB_PORT:-3307}
 
 # Redis: we generally use the compose service name inside docker network
-REDIS_HOST=$(pick "${REDIS_HOST:-}" "${PROD_REDIS_HOST:-}" ) || true
-REDIS_PORT=$(pick "${REDIS_PORT:-}" "${PROD_REDIS_PORT:-}" ) || true
-REDIS_PASSWORD=$(pick "${REDIS_PASSWORD:-}" "${PROD_REDIS_PASSWORD:-}" ) || true
+REDIS_HOST=$(stage_pick REDIS_HOST) || true
+REDIS_PORT=$(stage_pick REDIS_PORT) || true
+REDIS_PASSWORD=$(stage_pick REDIS_PASSWORD) || true
 REDIS_HOST=${REDIS_HOST:-redis}
 REDIS_PORT=${REDIS_PORT:-6379}
 REDIS_PASSWORD=${REDIS_PASSWORD:-adminEKLS1234}
 
 # JWT and AWS/S3
-JWT_SECRET=${JWT_SECRET:-}
+JWT_SECRET=${JWT_SECRET:-$(stage_pick JWT_SECRET || true)}
 JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-7d}
 AWS_REGION=${AWS_REGION:-ap-southeast-1}
-AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
-AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
-S3_BUCKET_NAME=${S3_BUCKET_NAME:-}
+AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-$(stage_pick AWS_ACCESS_KEY_ID || true)}
+AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-$(stage_pick AWS_SECRET_ACCESS_KEY || true)}
+S3_BUCKET_NAME=${S3_BUCKET_NAME:-$(stage_pick S3_BUCKET_NAME || true)}
 
 # LINE Notify/Channel (optional)
-LINE_CHANNEL_SECRET=${LINE_CHANNEL_SECRET:-}
-LINE_CHANNEL_ACCESS_TOKEN=${LINE_CHANNEL_ACCESS_TOKEN:-}
+LINE_CHANNEL_SECRET=${LINE_CHANNEL_SECRET:-$(stage_pick LINE_CHANNEL_SECRET || true)}
+LINE_CHANNEL_ACCESS_TOKEN=${LINE_CHANNEL_ACCESS_TOKEN:-$(stage_pick LINE_CHANNEL_ACCESS_TOKEN || true)}
 
 # phpMyAdmin convenience (optional). If not provided, derive from DB settings
 PMA_HOST=${PMA_HOST:-${DB_HOST:-}}

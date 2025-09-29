@@ -1,0 +1,167 @@
+name: deploy-uat
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: b6428259/englishkorat
+  AWS_REGION: ap-southeast-1
+  STAGE: uat
+  LIGHT_DEPLOY: "true"
+  DEPLOY_DIR: /opt/englishkorat-uat
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout (metadata only)
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=uat
+            type=sha,format=short,prefix=uat-
+
+      - name: Build & Push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Derive short SHA
+        id: vars
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Deploy over SSH (uat)
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.UAT_SSH_HOST }}
+          username: ${{ secrets.UAT_SSH_USER }}
+          key: ${{ secrets.UAT_SSH_KEY }}
+          port: 22
+          script_stop: false
+          script: |
+            set -euo pipefail
+            IMAGE_NAME='${{ env.IMAGE_NAME }}'
+            IMAGE_TAG='uat-${{ steps.vars.outputs.SHORT_SHA }}'
+            LIGHT='${{ env.LIGHT_DEPLOY }}'
+            AWS_REGION='${{ env.AWS_REGION }}'
+            STAGE='${{ env.STAGE }}'
+            REPO_DIR='${{ env.DEPLOY_DIR }}'
+            HEALTH_URL="http://localhost:3001/health"
+            LAST_TAG_FILE=".last_successful_image"
+            mkdir -p "$REPO_DIR" && cd "$REPO_DIR"
+
+            trap 'rc=$?; set +x; echo "--- FAILURE (rc=$rc) ---" >&2; docker ps >&2 || true; docker logs --tail 50 englishkorat-api-uat >&2 || true; exit $rc' ERR
+
+            if [ ! -w "$REPO_DIR" ]; then sudo chown "$USER":"$USER" "$REPO_DIR" || true; fi
+            set -x
+            COMPOSE_FILE=docker-compose.uat.yml
+            if [ "$LIGHT" = "false" ]; then
+              if [ -d .git ]; then
+                git fetch origin main && git reset --hard origin/main || true
+              else
+                rm -rf tmp_clone && git clone https://github.com/${{ github.repository }} -b main tmp_clone
+                cp -a tmp_clone/. . && rm -rf tmp_clone
+              fi
+            else
+              RAW_URL="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/${COMPOSE_FILE}"
+              if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+                if command -v apt-get >/dev/null 2>&1; then sudo apt-get update -y && sudo apt-get install -y curl || true; fi
+                if command -v dnf >/dev/null 2>&1; then sudo dnf -y install curl || true; fi
+                if command -v yum >/dev/null 2>&1; then sudo yum -y install curl || true; fi
+                if command -v apk >/dev/null 2>&1; then sudo apk add --no-cache curl || true; fi
+                if command -v microdnf >/dev/null 2>&1; then sudo microdnf install -y curl || true; fi
+              fi
+              curl -fsSL "$RAW_URL" -o "$COMPOSE_FILE" || wget -qO "$COMPOSE_FILE" "$RAW_URL"
+              mkdir -p deploy
+              for f in fallback-write-env.sh host-cleanup.sh; do
+                curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/deploy/$f" -o deploy/$f || wget -qO deploy/$f "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/deploy/$f" || true
+              done
+              chmod +x deploy/*.sh 2>/dev/null || true
+            fi
+
+            # Using dedicated UAT compose file, no sed transformation needed
+
+            # Export UAT secrets (namespaced with UAT_*)
+            export UAT_DB_HOST='${{ secrets.UAT_DB_HOST }}'
+            export UAT_DB_PORT='${{ secrets.UAT_DB_PORT }}'
+            export UAT_DB_USER='${{ secrets.UAT_DB_USER }}'
+            export UAT_DB_PASSWORD='${{ secrets.UAT_DB_PASSWORD }}'
+            export UAT_DB_NAME='${{ secrets.UAT_DB_NAME }}'
+            export UAT_REDIS_HOST='${{ secrets.UAT_REDIS_HOST }}'
+            export UAT_REDIS_PORT='${{ secrets.UAT_REDIS_PORT }}'
+            export UAT_REDIS_PASSWORD='${{ secrets.UAT_REDIS_PASSWORD }}'
+            export LINE_CHANNEL_SECRET='${{ secrets.UAT_LINE_CHANNEL_SECRET }}'
+            export LINE_CHANNEL_ACCESS_TOKEN='${{ secrets.UAT_LINE_CHANNEL_ACCESS_TOKEN }}'
+            export JWT_SECRET='${{ secrets.UAT_JWT_SECRET }}'
+            export JWT_EXPIRES_IN='${{ secrets.UAT_JWT_EXPIRES_IN }}'
+            export AWS_ACCESS_KEY_ID='${{ secrets.UAT_AWS_ACCESS_KEY_ID }}'
+            export AWS_SECRET_ACCESS_KEY='${{ secrets.UAT_AWS_SECRET_ACCESS_KEY }}'
+            export S3_BUCKET_NAME='${{ secrets.UAT_S3_BUCKET_NAME }}'
+            export APP_ENV=uat
+            export STAGE=uat
+            export AWS_REGION
+
+            if [ -x deploy/fallback-write-env.sh ]; then
+              # Map UAT_* -> runtime variables expected by script via env rename
+              export PROD_DB_HOST="$UAT_DB_HOST" PROD_DB_PORT="$UAT_DB_PORT" PROD_DB_USER="$UAT_DB_USER" PROD_DB_PASSWORD="$UAT_DB_PASSWORD" PROD_DB_NAME="$UAT_DB_NAME"
+              export PROD_REDIS_HOST="$UAT_REDIS_HOST" PROD_REDIS_PORT="$UAT_REDIS_PORT" PROD_REDIS_PASSWORD="$UAT_REDIS_PASSWORD"
+              bash deploy/fallback-write-env.sh
+            else
+              echo "ERROR: fallback-write-env.sh missing" >&2; exit 1
+            fi
+
+            for CN in ekorat-redis-uat; do
+              if docker ps -a --format '{{.Names}}' | grep -xq "$CN"; then docker rm -f "$CN" || true; fi
+            done
+
+            PREVIOUS_TAG=""; [ -f "$LAST_TAG_FILE" ] && PREVIOUS_TAG=$(cat "$LAST_TAG_FILE" || true)
+            docker pull "${IMAGE_NAME}:${IMAGE_TAG}" || IMAGE_TAG=uat
+            set -a; source .env; set +a
+            export USE_SSM=false
+            IMAGE_TAG=${IMAGE_TAG} docker compose -f "$COMPOSE_FILE" up -d --remove-orphans
+
+            HEALTH_OK=0
+            for i in $(seq 1 15); do
+              if curl -fsS --max-time 2 "$HEALTH_URL" >/dev/null 2>&1 || wget -qO- "$HEALTH_URL" >/dev/null 2>&1; then HEALTH_OK=1; break; fi
+              sleep 4
+            done
+            if [ $HEALTH_OK -ne 1 ]; then
+              echo "UAT deployment unhealthy" >&2
+              if [ -n "$PREVIOUS_TAG" ]; then IMAGE_TAG=$PREVIOUS_TAG docker compose -f docker-compose.production.yml up -d --remove-orphans || true; fi
+              exit 1
+            fi
+            echo "$IMAGE_TAG" > "$LAST_TAG_FILE"
+            [ -x deploy/host-cleanup.sh ] && bash deploy/host-cleanup.sh || docker image prune -f || true
+
+      - name: Disk usage after deploy
+        if: always()
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.UAT_SSH_HOST }}
+          username: ${{ secrets.UAT_SSH_USER }}
+          key: ${{ secrets.UAT_SSH_KEY }}
+          script: |
+            df -h /
+            docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
