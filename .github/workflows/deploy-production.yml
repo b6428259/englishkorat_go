@@ -72,7 +72,13 @@ jobs:
             REPO_DIR='${{ env.DEPLOY_DIR }}'
             HEALTH_URL="http://localhost:3000/health"
             LAST_TAG_FILE=".last_successful_image"
-            mkdir -p "$REPO_DIR"
+            # Safe create target directory with sudo fallback (avoid immediate exit on permission error)
+            if [ ! -d "$REPO_DIR" ]; then
+              if ! mkdir -p "$REPO_DIR" 2>/dev/null; then
+                echo "[INFO] Elevating to sudo for directory create $REPO_DIR" >&2
+                sudo mkdir -p "$REPO_DIR"
+              fi
+            fi
             cd "$REPO_DIR"
 
             trap 'rc=$?; set +x; echo "--- FAILURE DIAGNOSTICS (rc=$rc) ---" >&2; docker ps >&2 || true; docker logs --tail 50 englishkorat-api >&2 || true; echo "--- END DIAGNOSTICS ---" >&2; exit $rc' ERR
@@ -86,6 +92,17 @@ jobs:
             cd "$REPO_DIR"
 
             set -x
+            # Ensure docker accessible (fallback to sudo docker if needed)
+            shopt -s expand_aliases || true
+            if ! docker ps >/dev/null 2>&1; then
+              if sudo docker ps >/dev/null 2>&1; then
+                echo "[INFO] Using sudo docker" >&2
+                alias docker='sudo docker'
+              else
+                echo "ERROR: docker not accessible (even via sudo)." >&2
+                exit 1
+              fi
+            fi
             COMPOSE_FILE=docker-compose.production.yml
             if [ "$LIGHT" = "false" ]; then
               if [ -d .git ]; then

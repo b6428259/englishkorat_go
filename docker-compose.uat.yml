@@ -1,5 +1,3 @@
-version: "3.9"
-
 # UAT environment compose (separate from production)
 services:
   api:
@@ -54,8 +52,7 @@ services:
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-    ports:
-      - "6379:6379"  # adjust if port clash with production on same host
+    # No host port published to avoid conflict with production redis (internal access only)
     volumes:
       - redis_ekorat_uat:/data
     restart: unless-stopped

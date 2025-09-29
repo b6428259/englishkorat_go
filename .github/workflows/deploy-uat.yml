@@ -70,12 +70,28 @@ jobs:
             REPO_DIR='${{ env.DEPLOY_DIR }}'
             HEALTH_URL="http://localhost:3001/health"
             LAST_TAG_FILE=".last_successful_image"
-            mkdir -p "$REPO_DIR" && cd "$REPO_DIR"
+            if [ ! -d "$REPO_DIR" ]; then
+              if ! mkdir -p "$REPO_DIR" 2>/dev/null; then
+                echo "[INFO] Elevating to sudo for directory create $REPO_DIR" >&2
+                sudo mkdir -p "$REPO_DIR"
+              fi
+            fi
+            cd "$REPO_DIR"
 
             trap 'rc=$?; set +x; echo "--- FAILURE (rc=$rc) ---" >&2; docker ps >&2 || true; docker logs --tail 50 englishkorat-api-uat >&2 || true; exit $rc' ERR
 
             if [ ! -w "$REPO_DIR" ]; then sudo chown "$USER":"$USER" "$REPO_DIR" || true; fi
             set -x
+            shopt -s expand_aliases || true
+            if ! docker ps >/dev/null 2>&1; then
+              if sudo docker ps >/dev/null 2>&1; then
+                echo "[INFO] Using sudo docker" >&2
+                alias docker='sudo docker'
+              else
+                echo "ERROR: docker not accessible (even via sudo)." >&2
+                exit 1
+              fi
+            fi
             COMPOSE_FILE=docker-compose.uat.yml
             if [ "$LIGHT" = "false" ]; then
               if [ -d .git ]; then
