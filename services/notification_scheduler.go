@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"time"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -389,8 +390,8 @@ func (ns *NotificationScheduler) StartDailyScheduler() {
 	loc, _ := time.LoadLocation("Asia/Bangkok")
 	c := cron.New(cron.WithLocation(loc))
 
-	// ตั้ง job ให้รันทุกวันเวลา 10:00 น.
-	_, err := c.AddFunc("00 16 * * *", func() {
+	// ตั้ง job ให้รันทุกวันเวลา 01:15 น.
+	_, err := c.AddFunc("00 11 * * *", func() {
 		log.Println("⏰ Running daily LINE group reminder job...")
 
 		matcher := NewLineGroupMatcher()
@@ -409,57 +410,105 @@ func (ns *NotificationScheduler) StartDailyScheduler() {
 // sendDailyLineGroupReminders ดึง schedule ของพรุ่งนี้ และส่งแจ้งเตือนเข้าไลน์กลุ่ม
 func (ns *NotificationScheduler) sendDailyLineGroupReminders() {
 	db := database.DB
-	tomorrow := time.Now().AddDate(0, 0, 1)
+	//tomorrow := time.Now().AddDate(0, 0, 1)
+	loc, _ := time.LoadLocation("Asia/Bangkok")
+    now := time.Now().In(loc)	
+    startOfTomorrow := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, loc)
+    endOfTomorrow := startOfTomorrow.Add(24*time.Hour - time.Nanosecond)
 
-	var schedules []models.Schedules
-	if err := db.Preload("Group").Where("DATE(start_date) = ?", tomorrow.Format("2006-01-02")).Find(&schedules).Error; err != nil {
-		log.Printf("❌ Error fetching tomorrow's schedules: %v", err)
+	var sessions []models.Schedule_Sessions
+	if err := db.
+		Preload("Schedule").
+		Preload("Schedule.Group").
+		Preload("Schedule.DefaultTeacher.Teacher").
+		Where("session_date BETWEEN ? AND ?", startOfTomorrow, endOfTomorrow).
+		//Where("status IN ?", []string{"scheduled", "confirmed"}).
+		Order("start_time ASC").
+		Find(&sessions).Error; err != nil {
+		log.Printf("❌ Error fetching tomorrow's sessions: %v", err)
 		return
 	}
 
-	if len(schedules) == 0 {
-		log.Println("ℹ️ No schedules found for tomorrow")
+	log.Printf("📅 Found %d sessions scheduled for tomorrow (%s)", len(sessions), startOfTomorrow.Format("2006-01-02"))
+	if len(sessions) == 0 {
+		log.Println("ℹ️ No sessions found for tomorrow")
 		return
 	}
 
 	lineSvc := NewLineMessagingService()
 
-	for _, s := range schedules {
-		if s.Group == nil {
-			log.Printf("⚠️ Schedule '%s' (ID=%d) has no Group assigned", s.ScheduleName, s.ID)
+	for _, sess := range sessions {
+		if sess.Schedule == nil || sess.Schedule.Group == nil {
+			log.Printf("⚠️ Session ID=%d ไม่มี group", sess.ID)
 			continue
 		}
 
 		// หา LineGroup ที่แมทช์กับ Group นี้
 		var lineGroup models.LineGroup
-		if err := db.Where("matched_group_id = ? AND is_active = ?", s.Group.ID, true).First(&lineGroup).Error; err != nil {
-			log.Printf("⚠️ No LineGroup found for Group '%s' (ID=%d)", s.Group.GroupName, s.Group.ID)
+		if err := db.Where("matched_group_id = ? AND is_active = ?", sess.Schedule.Group.ID, true).
+			First(&lineGroup).Error; err != nil {
+			log.Printf("⚠️ No LineGroup found for Group '%s' (ID=%d)", sess.Schedule.Group.GroupName, sess.Schedule.Group.ID)
 			continue
 		}
 
-// 		teacherName := "ไม่พบข้อมูล"
-// if s.DefaultTeacher != nil {
-//     // ใช้ชื่อเล่นถ้ามี ไม่งั้น fallback เป็นชื่อจริง
-//     if s.DefaultTeacher.NicknameTh != "" {
-//         teacherName = s.DefaultTeacher.NicknameTh
-//     } else {
-//         teacherName = strings.TrimSpace(fmt.Sprintf("%s %s",
-//             s.DefaultTeacher.FirstNameTh, s.DefaultTeacher.LastNameTh))
-//     }
-// }
+		teacherName := "-"
+		if sess.Schedule.DefaultTeacher != nil && sess.Schedule.DefaultTeacher.Teacher != nil {
+			t := sess.Schedule.DefaultTeacher.Teacher
+			if t.NicknameEn != "" {
+				teacherName = fmt.Sprintf("T.%s", t.NicknameEn)
+			}
+		} else if sess.Schedule.DefaultTeacher != nil {
+			// Fallback to User.username or phone if Teacher profile missing
+			if sess.Schedule.DefaultTeacher.Username != "" {
+				teacherName = sess.Schedule.DefaultTeacher.Username
+			}
+		}
 
-		// Hardcode branch/room ชั่วคราว
-        branch := "สาขาโคราช"
-        room := "ห้อง A1"
+		// ✅ format เวลาเรียน
+		start := ""
+		end := ""
+		if sess.Start_time != nil {
+			start = sess.Start_time.Format("15:04")
+		}
+		if sess.End_time != nil {
+			end = sess.End_time.Format("15:04")
+		}
 
-		msg := fmt.Sprintf("📢 แจ้งเตือนตารางเรียนพรุ่งนี้\nกลุ่ม: %s\nสาขา: %s\nคลาส: %s\nเวลาเริ่ม: %s\nห้องเรียน: %s\nหากต้องการแจ้งลา กรุณาติดต่อแอดมิน (0812345678)",
-			s.Group.GroupName,
+		// Hardcode branch/room ชั่วครัว
+		//branch := "สาขาโคราช"
+
+		// ✅ ดึงสาขาจาก ScheduleName
+		branch := "-"
+		if sess.Schedule.ScheduleName != "" {
+			parts := strings.SplitN(sess.Schedule.ScheduleName, "-", 2) // แบ่งออกเป็น 2 ส่วนเท่านั้น
+			if len(parts) > 0 {
+				branch = strings.TrimSpace(parts[0]) // เอาส่วนก่อนขีดแรก + trim space
+			}
+		}
+		room := ""
+		AbsenceLink := "https://www.englishkorat.site/students/absence"
+
+		msg := fmt.Sprintf(
+			"📢 แจ้งเตือนตารางเรียนพรุ่งนี้\n
+				กลุ่ม: %s\n
+				สาขา: %s\n
+				คลาส: %s\n
+				ชั่วโมงที่เรียน: %s\n
+				เวลา: %s - %s\n
+				ครู: %s\n
+				ห้องเรียน: %s\n
+				กรณีแจ้งลา กรุณาแจ้งลาผ่านระบบล่วงหน้าก่อนวันเรียน และภายใน 18.00 น.\n
+        		หากแจ้งหลังจากนี้ ระบบจะหักชั่วโมงเรียนอัตโนมัติ\n
+				แจ้งลาที่นี่: %s",
+
+			sess.Schedule.Group.GroupName,
 			branch,
-			s.ScheduleName,
-			s.Start_date.Format("15:04"),
-			//teacherName,
+			sess.Schedule.ScheduleName,
+			start,
+			end,
+			teacherName,
 			room,
-			
+			AbsenceLink,
 		)
 
 		if err := lineSvc.SendLineMessageToGroup(lineGroup.GroupID, msg); err != nil {
