@@ -63,7 +63,6 @@ services:
     environment:
       PMA_HOST: ${PMA_HOST}
       PMA_USER: ${PMA_USER}
-      PMA_PASSWORD: ${PMA_PASSWORD}
       UPLOAD_LIMIT: 256M
     ports:
       - "8081:80"
