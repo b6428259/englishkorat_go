@@ -1,4 +1,4 @@
-package controllers
+package controllers //nolint:goconst
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"englishkorat_go/database"
 	"englishkorat_go/middleware"
 	"englishkorat_go/models"
+	"englishkorat_go/services"
 	"englishkorat_go/utils"
 	"strings"
 	"time"
@@ -220,6 +221,16 @@ func (ac *AuthController) GetProfile(c *fiber.Ctx) error {
 	// Load user relationships
 	database.DB.Preload("Branch").First(user, user.ID)
 
+	settingsService := services.NewSettingsService()
+	settings, settingsErr := settingsService.GetOrCreate(user.ID)
+	if settingsErr != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to load user settings",
+		})
+	}
+
+	settingsResponse := settingsService.BuildSettingsResponse(settings)
+
 	return c.JSON(fiber.Map{
 		"user": fiber.Map{
 			"id":        user.ID,
@@ -233,6 +244,9 @@ func (ac *AuthController) GetProfile(c *fiber.Ctx) error {
 			"status":    user.Status,
 			"avatar":    user.Avatar,
 		},
+		"settings":          settingsResponse.Settings,
+		"available_sounds":  settingsResponse.AvailableSounds,
+		"settings_metadata": settingsResponse.Metadata,
 	})
 }
 

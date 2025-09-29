@@ -139,12 +139,13 @@ func AutoMigrate() {
 		&models.ScheduleParticipant{},
 		&models.SessionConfirmation{},
 		&models.NotificationPreference{},
+		&models.UserSettings{},
 		&models.LineGroup{},
 		&models.Book{},
 		&models.ClassProgress{},
 		&models.Bill{},
 		&models.GroupLeaveQuota{},
-    	&models.Absence{},
+		&models.Absence{},
 	}
 
 	// Pre-sanitize: fix invalid JSON in notifications.channels before altering column type

@@ -37,6 +37,23 @@ type queuedNotification struct {
 
 const redisListKey = "notifications:queue"
 
+// SettingsSnapshot represents current notification-related user preferences delivered with notifications.
+type SettingsSnapshot struct {
+	Settings        interface{}            `json:"settings"`
+	AvailableSounds interface{}            `json:"available_sounds"`
+	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// SettingsProviderFunc resolves the settings snapshot for a user.
+type SettingsProviderFunc func(userID uint) (*SettingsSnapshot, error)
+
+var settingsProvider SettingsProviderFunc
+
+// SetSettingsProvider configures the package-level settings provider used when broadcasting notifications.
+func SetSettingsProvider(provider SettingsProviderFunc) {
+	settingsProvider = provider
+}
+
 // Service exposes notification creation with optional Redis queue
 // If Redis disabled/unavailable, performs direct DB insert.
 
@@ -132,8 +149,8 @@ func (s *Service) EnqueueOrCreate(userIDs []uint, n queuedNotification) error {
 	return s.createDirect(userIDs, n)
 }
 
-// createDirect writes directly to DB (used by worker or fallback)
-func (s *Service) createDirect(userIDs []uint, n queuedNotification) error {
+// createDirect writes directly to DB (used by worker or fallback).
+func (s *Service) createDirect(userIDs []uint, n queuedNotification) error { //nolint:gocognit
 	if len(userIDs) == 0 {
 		return nil
 	}
@@ -175,6 +192,12 @@ func (s *Service) createDirect(userIDs []uint, n queuedNotification) error {
 	// Send WebSocket notifications if hub is available
 	if s.wsHub != nil {
 		for _, notif := range notifs {
+			var snapshot *SettingsSnapshot
+			if settingsProvider != nil {
+				if snap, err := settingsProvider(notif.UserID); err == nil {
+					snapshot = snap
+				}
+			}
 			// Preload user data for WebSocket message
 			s.db.Preload("User").Preload("User.Student").Preload("User.Teacher").Preload("User.Branch").First(&notif, notif.ID)
 
@@ -183,6 +206,13 @@ func (s *Service) createDirect(userIDs []uint, n queuedNotification) error {
 			wsMessage := map[string]interface{}{
 				"type": "notification",
 				"data": dto,
+			}
+			if snapshot != nil {
+				wsMessage["settings"] = snapshot.Settings
+				wsMessage["available_sounds"] = snapshot.AvailableSounds
+				if len(snapshot.Metadata) > 0 {
+					wsMessage["settings_metadata"] = snapshot.Metadata
+				}
 			}
 			s.wsHub.BroadcastToUser(notif.UserID, wsMessage)
 		}
@@ -215,7 +245,8 @@ func (s *Service) StartWorker(stop <-chan struct{}) {
 	}()
 }
 
-func (s *Service) flushBatch(ctx context.Context, batchSize int) {
+// flushBatch polls redis queue and processes notifications in batches.
+func (s *Service) flushBatch(ctx context.Context, batchSize int) { //nolint:gocognit
 	if s.redis == nil {
 		return
 	}

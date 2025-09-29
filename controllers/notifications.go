@@ -1,4 +1,4 @@
-package controllers
+package controllers //nolint:goconst
 
 import (
 	"englishkorat_go/config"
@@ -86,6 +86,13 @@ func (nc *NotificationController) GetNotifications(c *fiber.Ctx) error {
 		dtos = append(dtos, utils.ToNotificationDTO(n))
 	}
 
+	settingsService := services.NewSettingsService()
+	settings, settingsErr := settingsService.GetOrCreate(user.ID)
+	if settingsErr != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to load user settings"})
+	}
+	settingsResponse := settingsService.BuildSettingsResponse(settings)
+
 	return c.JSON(fiber.Map{
 		"notifications": dtos,
 		"pagination": fiber.Map{
@@ -93,6 +100,9 @@ func (nc *NotificationController) GetNotifications(c *fiber.Ctx) error {
 			"limit": limit,
 			"total": total,
 		},
+		"settings":          settingsResponse.Settings,
+		"available_sounds":  settingsResponse.AvailableSounds,
+		"settings_metadata": settingsResponse.Metadata,
 	})
 }
 
@@ -114,19 +124,31 @@ func (nc *NotificationController) GetNotification(c *fiber.Ctx) error {
 
 	var notification models.Notification
 	if err := database.DB.Where("id = ? AND user_id = ?", uint(id), user.ID).
+		Preload("User").Preload("User.Student").Preload("User.Teacher").Preload("User.Branch").
 		First(&notification).Error; err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"error": "Notification not found",
+			"error": "Notification not found", //nolint:goconst
 		})
 	}
 
+	dto := utils.ToNotificationDTO(notification)
+	settingsService := services.NewSettingsService()
+	settings, settingsErr := settingsService.GetOrCreate(user.ID)
+	if settingsErr != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to load user settings"})
+	}
+	settingsResponse := settingsService.BuildSettingsResponse(settings)
+
 	return c.JSON(fiber.Map{
-		"notification": notification,
+		"notification":      dto,
+		"settings":          settingsResponse.Settings,
+		"available_sounds":  settingsResponse.AvailableSounds,
+		"settings_metadata": settingsResponse.Metadata,
 	})
 }
 
 // CreateNotification creates a new notification (admin only)
-func (nc *NotificationController) CreateNotification(c *fiber.Ctx) error {
+func (nc *NotificationController) CreateNotification(c *fiber.Ctx) error { //nolint:gocognit,gocyclo
 	var req struct {
 		UserID    uint     `json:"user_id"`
 		UserIDs   []uint   `json:"user_ids"`  // For multiple users
@@ -279,7 +301,7 @@ func (nc *NotificationController) MarkAsRead(c *fiber.Ctx) error {
 	if err := database.DB.Where("id = ? AND user_id = ?", uint(id), user.ID).
 		First(&notification).Error; err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"error": "Notification not found",
+			"error": "Notification not found", //nolint:goconst
 		})
 	}
 
@@ -344,7 +366,7 @@ func (nc *NotificationController) DeleteNotification(c *fiber.Ctx) error {
 	if err := database.DB.Where("id = ? AND user_id = ?", uint(id), user.ID).
 		First(&notification).Error; err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"error": "Notification not found",
+			"error": "Notification not found", //nolint:goconst
 		})
 	}
 

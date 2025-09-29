@@ -211,6 +211,10 @@ func (s *StorageService) getContentType(extension string) string {
 		return "image/png"
 	case "gif":
 		return "image/gif"
+	case "mp3":
+		return "audio/mpeg"
+	case "wav":
+		return "audio/wav"
 	case "pdf":
 		return "application/pdf"
 	default:

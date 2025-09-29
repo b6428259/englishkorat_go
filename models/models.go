@@ -92,9 +92,10 @@ type User struct {
 	PasswordResetByAdmin bool       `json:"-" gorm:"default:false"` // Flag if password was reset by admin
 
 	// Relationships
-	Branch  Branch   `json:"branch,omitempty" gorm:"foreignKey:BranchID"`
-	Student *Student `json:"student,omitempty" gorm:"foreignKey:UserID"`
-	Teacher *Teacher `json:"teacher,omitempty" gorm:"foreignKey:UserID"`
+	Branch   Branch        `json:"branch,omitempty" gorm:"foreignKey:BranchID"`
+	Student  *Student      `json:"student,omitempty" gorm:"foreignKey:UserID"`
+	Teacher  *Teacher      `json:"teacher,omitempty" gorm:"foreignKey:UserID"`
+	Settings *UserSettings `json:"settings,omitempty" gorm:"foreignKey:UserID"`
 }
 
 // Student model
@@ -487,6 +488,37 @@ type NotificationPreference struct {
 
 	// Relationship
 	User User `json:"user" gorm:"foreignKey:UserID"`
+}
+
+// UserSettings stores per-user preferences for language and notification channels
+type UserSettings struct {
+	BaseModel
+	UserID                   uint   `json:"user_id" gorm:"not null;uniqueIndex"`
+	Language                 string `json:"language" gorm:"size:20;not null;default:'th'"`
+	EnableNotificationSound  bool   `json:"enable_notification_sound" gorm:"default:true"`
+	NotificationSound        string `json:"notification_sound" gorm:"size:100;not null;default:'default'"`
+	EnableEmailNotifications bool   `json:"enable_email_notifications" gorm:"default:false"`
+	EnablePhoneNotifications bool   `json:"enable_phone_notifications" gorm:"default:false"`
+	EnableInAppNotifications bool   `json:"enable_in_app_notifications" gorm:"default:true"`
+	AdditionalPreferences    JSON   `json:"additional_preferences" gorm:"type:json"`
+	User                     User   `json:"user" gorm:"foreignKey:UserID"`
+}
+
+// NotificationSoundOption describes a built-in notification sound that clients can use.
+type NotificationSoundOption struct {
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+	File        string `json:"file"`
+}
+
+// BuiltInNotificationSoundOptions enumerates the default notification sounds bundled with the system.
+var BuiltInNotificationSoundOptions = []NotificationSoundOption{
+	{ID: "default", Label: "Default", Description: "Classic alert chime", File: "/sounds/default.mp3"},
+	{ID: "chime", Label: "Bright Chime", Description: "Upbeat tone for prominent alerts", File: "/sounds/chime.mp3"},
+	{ID: "bell", Label: "Soft Bell", Description: "Gentle bell suitable for focus mode", File: "/sounds/bell.mp3"},
+	{ID: "ding", Label: "Digital Ding", Description: "Short digital ping for quick updates", File: "/sounds/ding.mp3"},
+	{ID: "pop", Label: "Pop", Description: "Playful pop for casual notifications", File: "/sounds/pop.mp3"},
 }
 
 // Book model - stores books used in courses/sessions

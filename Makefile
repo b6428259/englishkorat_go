@@ -1,6 +1,6 @@
 # English Korat Go Backend Makefile
 
-.PHONY: build run dev test clean docker-build docker-run help
+.PHONY: build run dev test clean docker-build docker-run help start-dev
 
 # Build the application
 build:
@@ -99,6 +99,16 @@ setup-dev: deps build
 	@cp .env.example .env
 	@echo "📝 Please configure your .env file"
 	@echo "✅ Development environment setup completed!"
+
+# Start development environment with SSH tunnel (Windows-friendly)
+# This target runs the included PowerShell script `start-dev.ps1` which creates
+# an SSH tunnel, updates local .env ports, tests DB/Redis connectivity and runs
+# the application. On Windows use `make start-dev` to invoke the same flow.
+start-dev:
+	@echo "🔌 Starting development environment (via start-dev.ps1)..."
+	@pwsh -NoProfile -ExecutionPolicy Bypass -File start-dev.ps1 || \
+	powershell -NoProfile -ExecutionPolicy Bypass -File start-dev.ps1
+
 
 # Install development tools
 install-tools:

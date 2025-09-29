@@ -2,6 +2,7 @@ package main
 
 import (
 	"englishkorat_go/config"
+	"englishkorat_go/controllers"
 	"englishkorat_go/database"
 	"englishkorat_go/handlers"
 	"englishkorat_go/middleware"
@@ -19,6 +20,8 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/sirupsen/logrus"
 )
+
+const appVersion = "1.0.0"
 
 func init() {
 	// Initialize logging
@@ -64,6 +67,9 @@ func main() {
 		BodyLimit:    int(config.AppConfig.MaxFileSize),
 	})
 
+	healthService := services.NewHealthService("English Korat API", appVersion)
+	healthController := controllers.NewHealthController(healthService)
+
 	// Global middleware
 	app.Use(recover.New())
 	app.Use(helmet.New())
@@ -78,14 +84,8 @@ func main() {
 	app.Use(middleware.LoggerMiddleware())
 	app.Use(middleware.LogActivityMiddleware())
 
-	// Health check endpoint
-	app.Get("/health", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
-			"status":  "ok",
-			"service": "English Korat API",
-			"version": "1.0.0",
-		})
-	})
+	// Health check endpoint (root path for Docker/legacy probes)
+	app.Get("/health", healthController.GetHealthStatus)
 
 	// Note: WebSocket upgrade and authentication are handled in routes.SetupRoutes
 
@@ -104,7 +104,7 @@ func main() {
 	scheduleManager.Start()
 
 	// API routes
-	routes.SetupRoutes(app, wsHub)
+	routes.SetupRoutes(app, wsHub, healthService)
 	routes.SetupStaticRoutes(app)
 
 	// ✅ LINE Webhook Route
@@ -144,7 +144,7 @@ func main() {
 	// Bind to 0.0.0.0 so the app accepts connections from Docker's mapped port
 	port := config.AppConfig.IP + ":" + config.AppConfig.Port
 	log.Printf("🚀 Server starting on port %s", config.AppConfig.Port)
-	log.Printf("📚 English Korat API v1.0.0")
+	log.Printf("📚 English Korat API v%s", appVersion)
 	log.Printf("🌍 Environment: %s", config.AppConfig.AppEnv)
 
 	if err := app.Listen(port); err != nil {

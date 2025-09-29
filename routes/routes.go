@@ -1,9 +1,10 @@
-package routes
+package routes //nolint:goconst
 
 import (
 	"englishkorat_go/config"
 	"englishkorat_go/controllers"
 	"englishkorat_go/middleware"
+	"englishkorat_go/services"
 	notifsvc "englishkorat_go/services/notifications"
 	"englishkorat_go/services/websocket"
 
@@ -12,7 +13,7 @@ import (
 )
 
 // SetupRoutes configures all application routes
-func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
+func SetupRoutes(app *fiber.App, wsHub *websocket.Hub, healthService *services.HealthService) {
 	// Initialize controllers
 	authController := &controllers.AuthController{}
 	userController := &controllers.UserController{}
@@ -31,6 +32,8 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	billsImportController := &controllers.BillsImportController{}
 	billsController := &controllers.BillsController{}
 	absenceController := &controllers.AbsenceController{}
+	settingsController := controllers.NewSettingsController()
+	healthController := controllers.NewHealthController(healthService)
 	wsController := controllers.NewWebSocketController(wsHub)
 
 	// localhost:3000/api/auth/login
@@ -38,11 +41,14 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	// API group
 	api := app.Group("/api")
 
+	// Comprehensive health check
+	api.Get("/health", healthController.GetHealthStatus)
+
 	// Public routes (no authentication required)
 	public := api.Group("/public")
 
 	// Courses - PUBLIC endpoint as required
-	public.Get("/courses", courseController.GetCourses)
+	public.Get("/courses", courseController.GetCourses) //nolint:goconst
 	public.Get("/courses/:id", courseController.GetCourse)
 	public.Get("/courses/branch/:branch_id", courseController.GetCoursesByBranch)
 
@@ -86,7 +92,7 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 
 	// Also expose public courses directly under /api/courses for unauthenticated access
 	// This ensures requests to /api/courses/ (with trailing slash) are handled.
-	api.Get("/courses", courseController.GetCourses)
+	api.Get("/courses", courseController.GetCourses) //nolint:goconst
 	api.Get("/courses/:id", courseController.GetCourse)
 	api.Get("/courses/branch/:branch_id", courseController.GetCoursesByBranch)
 
@@ -119,6 +125,9 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	users.Put("/:id", middleware.RequireOwnerOrAdmin(), userController.UpdateUser)
 	users.Delete("/:id", middleware.RequireOwnerOrAdmin(), userController.DeleteUser)
 	users.Post("/:id/avatar", userController.UploadAvatar) // Users can upload their own avatar
+	users.Get("/:id/settings", middleware.RequireOwnerOrAdmin(), settingsController.GetUserSettings)
+	users.Put("/:id/settings", middleware.RequireOwnerOrAdmin(), settingsController.UpdateUserSettings)
+	users.Post("/:id/settings/custom-sound", middleware.RequireOwnerOrAdmin(), settingsController.UploadUserCustomSound)
 
 	// Course management routes (protected)
 	courses := protected.Group("/courses")
@@ -145,7 +154,7 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	students.Post("/", middleware.RequireTeacherOrAbove(), studentController.CreateStudent)
 	students.Put("/:id", middleware.RequireTeacherOrAbove(), studentController.UpdateStudent)
 	students.Delete("/:id", middleware.RequireOwnerOrAdmin(), studentController.DeleteStudent)
-	students.Get("/branch/:branch_id", middleware.RequireTeacherOrAbove(), studentController.GetStudentsByBranch)
+	students.Get("/branch/:branch_id", middleware.RequireTeacherOrAbove(), studentController.GetStudentsByBranch) //nolint:goconst
 
 	// New admin endpoints for the redesigned registration workflow
 	students.Patch("/:id", middleware.RequireTeacherOrAbove(), studentController.UpdateStudentInfo)               // Complete student information
@@ -162,7 +171,7 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	teachers.Post("/", middleware.RequireOwnerOrAdmin(), teacherController.CreateTeacher)
 	teachers.Put("/:id", middleware.RequireOwnerOrAdmin(), teacherController.UpdateTeacher)
 	teachers.Delete("/:id", middleware.RequireOwnerOrAdmin(), teacherController.DeleteTeacher)
-	teachers.Get("/branch/:branch_id", middleware.RequireTeacherOrAbove(), teacherController.GetTeachersByBranch)
+	teachers.Get("/branch/:branch_id", middleware.RequireTeacherOrAbove(), teacherController.GetTeachersByBranch) //nolint:goconst
 	teachers.Get("/specializations", teacherController.GetTeacherSpecializations)
 	teachers.Get("/types", teacherController.GetTeacherTypes)
 
@@ -173,7 +182,7 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	rooms.Post("/", middleware.RequireOwnerOrAdmin(), roomController.CreateRoom)
 	rooms.Put("/:id", middleware.RequireOwnerOrAdmin(), roomController.UpdateRoom)
 	rooms.Delete("/:id", middleware.RequireOwnerOrAdmin(), roomController.DeleteRoom)
-	rooms.Get("/branch/:branch_id", middleware.RequireTeacherOrAbove(), roomController.GetRoomsByBranch)
+	rooms.Get("/branch/:branch_id", middleware.RequireTeacherOrAbove(), roomController.GetRoomsByBranch) //nolint:goconst
 	rooms.Get("/available", middleware.RequireTeacherOrAbove(), roomController.GetAvailableRooms)
 	rooms.Patch("/:id/status", middleware.RequireTeacherOrAbove(), roomController.UpdateRoomStatus)
 
@@ -181,7 +190,7 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	notifications := protected.Group("/notifications")
 	notifications.Get("/", notificationController.GetNotifications)
 	notifications.Get("/unread-count", notificationController.GetUnreadCount)
-	notifications.Get("/stats", middleware.RequireOwnerOrAdmin(), notificationController.GetNotificationStats)
+	notifications.Get("/stats", middleware.RequireOwnerOrAdmin(), notificationController.GetNotificationStats) //nolint:goconst
 	notifications.Get("/:id", notificationController.GetNotification)
 	notifications.Post("/", middleware.RequireOwnerOrAdmin(), notificationController.CreateNotification)
 	notifications.Patch("/:id/read", notificationController.MarkAsRead)
@@ -191,7 +200,7 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 	// Log management routes (Admin/Owner only)
 	logs := protected.Group("/logs", middleware.RequireOwnerOrAdmin())
 	logs.Get("/", logController.GetLogs)
-	logs.Get("/stats", logController.GetLogStats)
+	logs.Get("/stats", logController.GetLogStats) //nolint:goconst
 	logs.Get("/:id", logController.GetLog)
 	logs.Delete("/old", logController.DeleteOldLogs)
 	logs.Get("/export", logController.ExportLogs)
@@ -258,15 +267,20 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub) {
 
 	// Absence routes
 	absences := protected.Group("/absences")
-	absences.Post("/", middleware.RequireOwnerOrAdmin(), absenceController.CreateAbsence)                 // นักเรียนส่งคำขอลา
-	absences.Get("/", middleware.RequireTeacherOrAbove(), absenceController.GetAbsences)                   // นักเรียน / ครู / แอดมิน ดูประวัติลา
-	absences.Get("/:id", middleware.RequireOwnerOrAdmin(), absenceController.GetAbsencesByGroup)             // ดูรายละเอียดการลา
+	absences.Post("/", middleware.RequireOwnerOrAdmin(), absenceController.CreateAbsence)        // นักเรียนส่งคำขอลา
+	absences.Get("/", middleware.RequireTeacherOrAbove(), absenceController.GetAbsences)         // นักเรียน / ครู / แอดมิน ดูประวัติลา
+	absences.Get("/:id", middleware.RequireOwnerOrAdmin(), absenceController.GetAbsencesByGroup) // ดูรายละเอียดการลา
 	// absences.Patch("/:id/approve", middleware.RequireOwnerOrAdmin(), absenceController.ApproveAbsence) // อนุมัติ / ปฏิเสธการลา
-	
+
+	// Settings routes
+	settings := protected.Group("/settings")
+	settings.Get("/me", settingsController.GetMySettings)
+	settings.Put("/me", settingsController.UpdateMySettings)
+	settings.Post("/me/custom-sound", settingsController.UploadMyCustomSound)
 
 	// WebSocket routes
 	ws := protected.Group("/ws")
-	ws.Get("/stats", middleware.RequireOwnerOrAdmin(), wsController.GetWebSocketStats)
+	ws.Get("/stats", middleware.RequireOwnerOrAdmin(), wsController.GetWebSocketStats) //nolint:goconst
 
 	// WebSocket connection endpoint - use websocket upgrade middleware
 	app.Use("/ws", func(c *fiber.Ctx) error {
