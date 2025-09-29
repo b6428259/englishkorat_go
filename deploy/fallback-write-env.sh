@@ -155,6 +155,6 @@ TMP_FILE=.env.new
 } > "$TMP_FILE"
 
 mv "$TMP_FILE" .env
-log "Written .env (production) with DB host=$DB_HOST name=$DB_NAME"
+log "Written .env ($APP_ENV) with DB host=$DB_HOST name=$DB_NAME stage=$STAGE"
 exit 0
 
