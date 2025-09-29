@@ -156,7 +156,7 @@ jobs:
             fi
 
             # Remove conflicting containers
-            for CN in ekorat-redis; do
+            for CN in ekorat-redis englishkorat-api ekorat-phpmyadmin; do
               if docker ps -a --format '{{.Names}}' | grep -xq "$CN"; then
                 docker rm -f "$CN" || true
               fi

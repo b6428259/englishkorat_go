@@ -148,8 +148,11 @@ jobs:
               echo "ERROR: fallback-write-env.sh missing" >&2; exit 1
             fi
 
-            for CN in ekorat-redis-uat; do
-              if docker ps -a --format '{{.Names}}' | grep -xq "$CN"; then docker rm -f "$CN" || true; fi
+            # Pre-clean conflicting (old) containers to avoid name conflicts
+            for CN in ekorat-redis-uat ekorat-phpmyadmin-uat englishkorat-api-uat; do
+              if docker ps -a --format '{{.Names}}' | grep -xq "$CN"; then
+                docker rm -f "$CN" || true
+              fi
             done
 
             PREVIOUS_TAG=""; [ -f "$LAST_TAG_FILE" ] && PREVIOUS_TAG=$(cat "$LAST_TAG_FILE" || true)
