@@ -15,14 +15,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// Queue item structure stored in Redis
-// Keep minimal to reduce payload size
-// We allow batching many userIDs for same payload
-// CIA Goals:
-//  - Confidentiality: payload only includes non-sensitive fields
-//  - Integrity: we store created_at to detect stale items; DB write is source of truth
-//  - Availability: if Redis down -> fallback to direct DB insert
-
 type queuedNotification struct {
 	UserIDs   []uint    `json:"user_ids"`
 	Title     string    `json:"title"`
