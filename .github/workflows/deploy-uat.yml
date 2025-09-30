@@ -68,7 +68,7 @@ jobs:
             AWS_REGION='${{ env.AWS_REGION }}'
             STAGE='${{ env.STAGE }}'
             REPO_DIR='${{ env.DEPLOY_DIR }}'
-            HEALTH_URL="http://localhost:3001/health"
+            HEALTH_URL="http://localhost:3000/health"
             LAST_TAG_FILE=".last_successful_image"
             if [ ! -d "$REPO_DIR" ]; then
               if ! mkdir -p "$REPO_DIR" 2>/dev/null; then
