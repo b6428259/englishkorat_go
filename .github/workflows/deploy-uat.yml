@@ -101,21 +101,23 @@ jobs:
                 cp -a tmp_clone/. . && rm -rf tmp_clone
               fi
             else
-              RAW_URL="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/${COMPOSE_FILE}"
-              if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
-                if command -v apt-get >/dev/null 2>&1; then sudo apt-get update -y && sudo apt-get install -y curl || true; fi
-                if command -v dnf >/dev/null 2>&1; then sudo dnf -y install curl || true; fi
-                if command -v yum >/dev/null 2>&1; then sudo yum -y install curl || true; fi
-                if command -v apk >/dev/null 2>&1; then sudo apk add --no-cache curl || true; fi
-                if command -v microdnf >/dev/null 2>&1; then sudo microdnf install -y curl || true; fi
-              fi
-              curl -fsSL "$RAW_URL" -o "$COMPOSE_FILE" || wget -qO "$COMPOSE_FILE" "$RAW_URL"
-              mkdir -p deploy
-              for f in fallback-write-env.sh host-cleanup.sh; do
-                curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/deploy/$f" -o deploy/$f || wget -qO deploy/$f "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/deploy/$f" || true
-              done
-              chmod +x deploy/*.sh 2>/dev/null || true
+              echo "[LIGHT DEPLOY] Skipping repo sync; using remote compose/scripts" >&2
             fi
+
+            RAW_URL="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/${COMPOSE_FILE}"
+            if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+              if command -v apt-get >/dev/null 2>&1; then sudo apt-get update -y && sudo apt-get install -y curl || true; fi
+              if command -v dnf >/dev/null 2>&1; then sudo dnf -y install curl || true; fi
+              if command -v yum >/dev/null 2>&1; then sudo yum -y install curl || true; fi
+              if command -v apk >/dev/null 2>&1; then sudo apk add --no-cache curl || true; fi
+              if command -v microdnf >/dev/null 2>&1; then sudo microdnf install -y curl || true; fi
+            fi
+            curl -fsSL "$RAW_URL" -o "$COMPOSE_FILE" || wget -qO "$COMPOSE_FILE" "$RAW_URL"
+            mkdir -p deploy
+            for f in fallback-write-env.sh host-cleanup.sh; do
+              curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/deploy/$f" -o deploy/$f || wget -qO deploy/$f "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/deploy/$f" || true
+            done
+            chmod +x deploy/*.sh 2>/dev/null || true
 
             # Using dedicated UAT compose file, no sed transformation needed
 
