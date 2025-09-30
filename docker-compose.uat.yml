@@ -37,7 +37,7 @@ services:
     depends_on:
       - redis-uat
     ports:
-      - "3001:3000"  # Expose UAT on different host port
+      - "3000:3000"  # Expose UAT on different host port
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO", "-", "http://localhost:3000/health"]
@@ -65,7 +65,7 @@ services:
       PMA_USER: ${PMA_USER}
       UPLOAD_LIMIT: 256M
     ports:
-      - "8081:80"
+      - "8080:80"
     restart: unless-stopped
 
 volumes:
