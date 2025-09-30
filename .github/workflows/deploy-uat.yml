@@ -137,6 +137,9 @@ jobs:
             export AWS_ACCESS_KEY_ID='${{ secrets.UAT_AWS_ACCESS_KEY_ID }}'
             export AWS_SECRET_ACCESS_KEY='${{ secrets.UAT_AWS_SECRET_ACCESS_KEY }}'
             export S3_BUCKET_NAME='${{ secrets.UAT_S3_BUCKET_NAME }}'
+            export PMA_HOST='${{ secrets.UAT_PMA_HOST }}'
+            export PMA_USER='${{ secrets.UAT_PMA_USER }}'
+            export PMA_PASSWORD='${{ secrets.UAT_PMA_PASSWORD }}'
             export APP_ENV=uat
             export STAGE=uat
             export AWS_REGION

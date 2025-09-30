@@ -147,6 +147,9 @@ jobs:
             export AWS_ACCESS_KEY_ID='${{ secrets.PROD_AWS_ACCESS_KEY_ID }}'
             export AWS_SECRET_ACCESS_KEY='${{ secrets.PROD_AWS_SECRET_ACCESS_KEY }}'
             export S3_BUCKET_NAME='${{ secrets.PROD_S3_BUCKET_NAME }}'
+            export PMA_HOST='${{ secrets.PROD_PMA_HOST }}'
+            export PMA_USER='${{ secrets.PROD_PMA_USER }}'
+            export PMA_PASSWORD='${{ secrets.PROD_PMA_PASSWORD }}'
             export APP_ENV=production
             export STAGE=production
             export AWS_REGION

@@ -35,7 +35,6 @@ services:
       - ALLOWED_EXTENSIONS=jpg,jpeg,png,webp,gif
       - LINE_CHANNEL_SECRET=${LINE_CHANNEL_SECRET}
       - LINE_CHANNEL_ACCESS_TOKEN=${LINE_CHANNEL_ACCESS_TOKEN}
-
     depends_on:
       - redis
     ports:
@@ -66,6 +65,7 @@ services:
     environment:
       PMA_HOST: ${PMA_HOST}
       PMA_USER: ${PMA_USER}
+      PMA_PASSWORD: ${PMA_PASSWORD}
       UPLOAD_LIMIT: 256M
     ports:
       - "8080:80"
