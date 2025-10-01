@@ -49,6 +49,8 @@ services:
   redis-uat:
     image: redis:7-alpine
     container_name: ekorat-redis-uat
+    ports:
+      - "6380:6379"  # Expose UAT Redis on different host port
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}

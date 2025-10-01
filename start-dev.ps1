@@ -122,6 +122,8 @@ $sshArgs = @(
     "-L", "$LOCAL_DB_PORT`:$RDS_HOST`:$REMOTE_DB_PORT"
     # Forward Redis (still assumed to be on EC2 localhost)
     "-L", "$LOCAL_REDIS_PORT`:$REDIS_HOST`:$REMOTE_REDIS_PORT"
+    # Fail fast if a local forward cannot be established
+    "-o", "ExitOnForwardFailure=yes"
     "-i", $EC2_KEY_PATH
     "$EC2_USER@$EC2_HOST"
 )
@@ -138,7 +140,72 @@ Start-Sleep -Seconds 3
 Write-Host "`nTesting connections..." -ForegroundColor Cyan
 
 $dbSuccess = Test-Connection $DB_HOST $LOCAL_DB_PORT "MySQL Database"
-$redisSuccess = Test-Connection $REDIS_HOST $LOCAL_REDIS_PORT "Redis"
+
+# Read REDIS_PASSWORD from .env (if present) for AUTH during the ping
+if (Test-Path ".env") {
+    $envLines = Get-Content ".env"
+} else {
+    $envLines = @()
+}
+$REDIS_PASSWORD = ($envLines | Where-Object { $_ -match "^REDIS_PASSWORD=" }) -replace "^REDIS_PASSWORD=", ""
+
+# Function to perform a Redis PING over the forwarded TCP port (validates end-to-end)
+function Test-RedisPing {
+    param($TargetHost, $Port, $Password)
+
+    Write-Host "Testing Redis PING to $TargetHost`:$Port..." -ForegroundColor Yellow
+    try {
+        $client = New-Object System.Net.Sockets.TcpClient
+        $async = $client.ConnectAsync($TargetHost, [int]$Port)
+        $timeout = [System.Threading.Tasks.Task]::Delay(5000)
+        $completed = [System.Threading.Tasks.Task]::WaitAny(@($async, $timeout))
+        if ($completed -ne 0 -or -not $client.Connected) {
+            Write-Host "Redis TCP connect failed or timed out" -ForegroundColor Red
+            return $false
+        }
+
+        $stream = $client.GetStream()
+        $writer = New-Object System.IO.StreamWriter($stream)
+        $writer.NewLine = "`r`n"
+        $writer.AutoFlush = $true
+
+        # If password provided, send AUTH first
+        if ($Password -and $Password -ne "") {
+            $authCmd = "*2`r`n$4`r`nAUTH`r`n$($Password.Length)`r`n$Password`r`n"
+            $bytes = [System.Text.Encoding]::ASCII.GetBytes($authCmd)
+            $stream.Write($bytes, 0, $bytes.Length)
+            Start-Sleep -Milliseconds 200
+        }
+
+        # Send PING
+        $pingCmd = "*1`r`n$4`r`nPING`r`n"
+        $bytes = [System.Text.Encoding]::ASCII.GetBytes($pingCmd)
+        $stream.Write($bytes, 0, $bytes.Length)
+
+        # Read response
+        $reader = New-Object System.IO.StreamReader($stream)
+        Start-Sleep -Milliseconds 200
+        $resp = ""
+        if ($stream.DataAvailable) { $resp = $reader.ReadLine() }
+
+        $reader.Close()
+        $writer.Close()
+        $client.Close()
+
+        if ($resp -and $resp -match "^\+PONG") {
+            Write-Host "Redis PING successful (PONG received)" -ForegroundColor Green
+            return $true
+        } else {
+            Write-Host "Redis PING failed (no PONG). Response: $resp" -ForegroundColor Red
+            return $false
+        }
+    } catch {
+        Write-Host "Redis PING failed: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
+    }
+}
+
+$redisSuccess = Test-RedisPing "localhost" $LOCAL_REDIS_PORT $REDIS_PASSWORD
 
 Write-Host "`nConnection Summary:" -ForegroundColor Cyan
 Write-Host "======================" -ForegroundColor Cyan
