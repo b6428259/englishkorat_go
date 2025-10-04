@@ -2,7 +2,9 @@ package controllers
 
 import (
 	"errors"
+	"log"
 	"strconv"
+	"strings"
 
 	"englishkorat_go/database"
 	"englishkorat_go/middleware"
@@ -71,6 +73,11 @@ func (sc *SettingsController) UpdateMySettings(c *fiber.Ctx) error {
 		AdditionalPreferences:    req.AdditionalPreferences,
 	}
 
+	// Basic front-end level validation (optional but early feedback)
+	if input.Language != nil && strings.TrimSpace(*input.Language) == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "language cannot be empty"})
+	}
+
 	settings, err := sc.service.Update(user, input)
 	if err != nil {
 		return handleSettingsError(c, err)
@@ -134,6 +141,10 @@ func (sc *SettingsController) UpdateUserSettings(c *fiber.Ctx) error {
 		EnablePhoneNotifications: req.EnablePhoneNotifications,
 		EnableInAppNotifications: req.EnableInAppNotifications,
 		AdditionalPreferences:    req.AdditionalPreferences,
+	}
+
+	if input.Language != nil && strings.TrimSpace(*input.Language) == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "language cannot be empty"})
 	}
 
 	settings, svcErr := sc.service.Update(user, input)
@@ -244,9 +255,21 @@ func handleSettingsError(c *fiber.Ctx, err error) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Unknown settings error"})
 	}
 
+	// Validation layer (user-facing)
 	if errors.Is(err, services.ErrSettingsValidation) {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
+	// Internal diagnostic classification
+	var internal *services.SettingsInternalError
+	if errors.As(err, &internal) {
+		log.Printf("settings internal error (%s): %v", internal.Code, internal.Err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error":      "Failed to update settings",
+			"error_code": internal.Code,
+		})
+	}
+
+	log.Printf("settings unknown error: %v", err)
 	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update settings"})
 }

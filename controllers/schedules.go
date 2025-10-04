@@ -6,13 +6,22 @@ import (
 	"englishkorat_go/services"
 	notifsvc "englishkorat_go/services/notifications"
 	"englishkorat_go/utils"
+	"errors"
 	"fmt"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
+
+type SessionTimeSlot struct {
+	Weekday   int    `json:"weekday"`
+	StartTime string `json:"start_time"`
+}
 
 type CreateScheduleRequest struct {
 	// Core schedule information
@@ -40,10 +49,11 @@ type CreateScheduleRequest struct {
 	// Settings
 	AutoRescheduleHoliday bool `json:"auto_reschedule"`
 	// Alias to accept client field auto_reschedule_holidays as well
-	AutoRescheduleHolidaysAlias bool   `json:"auto_reschedule_holidays"`
-	Notes                       string `json:"notes"`
-	SessionStartTime            string `json:"session_start_time" validate:"required"` // เวลาเริ่มต้นของแต่ละ session เช่น "09:00"
-	CustomRecurringDays         []int  `json:"custom_recurring_days,omitempty"`        // สำหรับ custom pattern [0=วันอาทิตย์, 1=วันจันทร์, ...]
+	AutoRescheduleHolidaysAlias bool              `json:"auto_reschedule_holidays"`
+	Notes                       string            `json:"notes"`
+	SessionStartTime            string            `json:"session_start_time" validate:"required"` // เวลาเริ่มต้นของแต่ละ session เช่น "09:00"
+	CustomRecurringDays         []int             `json:"custom_recurring_days,omitempty"`        // สำหรับ custom pattern [0=วันอาทิตย์, 1=วันจันทร์, ...]
+	SessionTimes                []SessionTimeSlot `json:"session_times,omitempty"`
 }
 
 type ConfirmScheduleRequest struct {
@@ -58,11 +68,747 @@ type CreateMakeupSessionRequest struct {
 	NewSessionStatus  string    `json:"new_session_status" validate:"required,oneof=cancelled rescheduled no-show"`
 }
 
+type CheckRoomConflictRequest struct {
+	RoomID              uint              `json:"room_id"`
+	RoomIDs             []uint            `json:"room_ids,omitempty"`
+	BranchID            *uint             `json:"branch_id,omitempty"`
+	RecurringPattern    string            `json:"recurring_pattern"`
+	TotalHours          int               `json:"total_hours"`
+	HoursPerSession     int               `json:"hours_per_session"`
+	SessionPerWeek      int               `json:"session_per_week"`
+	StartDate           time.Time         `json:"start_date"`
+	EstimatedEndDate    time.Time         `json:"estimated_end_date"`
+	SessionStartTime    string            `json:"session_start_time"`
+	CustomRecurringDays []int             `json:"custom_recurring_days,omitempty"`
+	SessionTimes        []SessionTimeSlot `json:"session_times,omitempty"`
+	ExcludeScheduleID   *uint             `json:"exclude_schedule_id,omitempty"`
+}
+
+type RoomConflictDetail struct {
+	RoomID       uint   `json:"room_id"`
+	ExistingRoom *uint  `json:"existing_room_id,omitempty"`
+	SessionID    uint   `json:"session_id"`
+	ScheduleID   uint   `json:"schedule_id"`
+	ScheduleName string `json:"schedule_name"`
+	SessionDate  string `json:"session_date"`
+	StartTime    string `json:"start_time"`
+	EndTime      string `json:"end_time"`
+}
+
+type RoomConflictSummary struct {
+	RoomID    uint                 `json:"room_id"`
+	Conflicts []RoomConflictDetail `json:"conflicts"`
+}
+
+type GroupConflictInfo struct {
+	ScheduleID       uint       `json:"schedule_id"`
+	ScheduleName     string     `json:"schedule_name"`
+	Status           string     `json:"status"`
+	StartDate        *time.Time `json:"start_date,omitempty"`
+	EstimatedEndDate *time.Time `json:"estimated_end_date,omitempty"`
+}
+
+type ScheduleConflictSlot struct {
+	ScheduleID   uint   `json:"schedule_id"`
+	ScheduleName string `json:"schedule_name"`
+	SessionID    uint   `json:"session_id"`
+	SessionDate  string `json:"session_date"`
+	StartTime    string `json:"start_time"`
+	EndTime      string `json:"end_time"`
+}
+
+type TeacherConflictDetail struct {
+	TeacherID   uint                   `json:"teacher_id"`
+	TeacherName string                 `json:"teacher_name"`
+	Conflicts   []ScheduleConflictSlot `json:"conflicts"`
+}
+
+type ParticipantConflictDetail struct {
+	UserID    uint                   `json:"user_id"`
+	Username  string                 `json:"username"`
+	Conflicts []ScheduleConflictSlot `json:"conflicts"`
+}
+
+type StudentConflictDetail struct {
+	StudentID   uint                   `json:"student_id"`
+	StudentName string                 `json:"student_name"`
+	UserID      *uint                  `json:"user_id,omitempty"`
+	Conflicts   []ScheduleConflictSlot `json:"conflicts"`
+}
+
+type SchedulePreviewIssue struct {
+	Severity string      `json:"severity"`
+	Code     string      `json:"code"`
+	Message  string      `json:"message"`
+	Details  interface{} `json:"details,omitempty"`
+}
+
+type SessionPreview struct {
+	SessionNumber int    `json:"session_number"`
+	WeekNumber    int    `json:"week_number"`
+	Date          string `json:"date"`
+	StartTime     string `json:"start_time"`
+	EndTime       string `json:"end_time"`
+	Notes         string `json:"notes,omitempty"`
+}
+
+type HolidayImpact struct {
+	SessionNumber  int    `json:"session_number"`
+	Date           string `json:"date"`
+	HolidayName    string `json:"holiday_name,omitempty"`
+	ShiftedTo      string `json:"shifted_to,omitempty"`
+	WasRescheduled bool   `json:"was_rescheduled"`
+}
+
+type GroupPaymentMember struct {
+	MemberID      uint   `json:"member_id"`
+	StudentID     uint   `json:"student_id"`
+	StudentName   string `json:"student_name"`
+	PaymentStatus string `json:"payment_status"`
+}
+
+type GroupPaymentSummary struct {
+	GroupID            uint                 `json:"group_id"`
+	GroupName          string               `json:"group_name"`
+	GroupPaymentStatus string               `json:"group_payment_status"`
+	EligibleMembers    int                  `json:"eligible_members"`
+	IneligibleMembers  int                  `json:"ineligible_members"`
+	MemberTotals       map[string]int       `json:"member_totals"`
+	RequireDeposit     bool                 `json:"require_deposit"`
+	Members            []GroupPaymentMember `json:"members"`
+}
+
+type ScheduleConflictReport struct {
+	GroupConflict        *GroupConflictInfo          `json:"group_conflict,omitempty"`
+	RoomConflicts        []RoomConflictSummary       `json:"room_conflicts,omitempty"`
+	TeacherConflicts     []TeacherConflictDetail     `json:"teacher_conflicts,omitempty"`
+	ParticipantConflicts []ParticipantConflictDetail `json:"participant_conflicts,omitempty"`
+	StudentConflicts     []StudentConflictDetail     `json:"student_conflicts,omitempty"`
+}
+
+type conflictReportOptions struct {
+	IncludeStudentConflicts bool
+}
+
 type ScheduleController struct{}
+
+func getSessionDateRange(sessions []models.Schedule_Sessions) (time.Time, time.Time) {
+	var minDate, maxDate time.Time
+	for _, session := range sessions {
+		if session.Session_date == nil {
+			continue
+		}
+		date := *session.Session_date
+		if minDate.IsZero() || date.Before(minDate) {
+			minDate = date
+		}
+		if maxDate.IsZero() || date.After(maxDate) {
+			maxDate = date
+		}
+	}
+	return minDate, maxDate
+}
+
+func sessionsOverlapOnSameDay(a, b models.Schedule_Sessions) bool {
+	if a.Start_time == nil || a.End_time == nil || b.Start_time == nil || b.End_time == nil {
+		return false
+	}
+
+	aDay := time.Date(a.Start_time.Year(), a.Start_time.Month(), a.Start_time.Day(), 0, 0, 0, 0, a.Start_time.Location())
+	bDay := time.Date(b.Start_time.Year(), b.Start_time.Month(), b.Start_time.Day(), 0, 0, 0, 0, b.Start_time.Location())
+	if !aDay.Equal(bDay) {
+		return false
+	}
+
+	return a.Start_time.Before(*b.End_time) && b.Start_time.Before(*a.End_time)
+}
+
+func parseHourMinute(value string) (int, int, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, 0, fmt.Errorf("time value cannot be empty")
+	}
+
+	layout := "15:04"
+	if colonCount := strings.Count(value, ":"); colonCount >= 2 {
+		layout = "15:04:05"
+	}
+
+	if t, err := time.Parse(layout, value); err == nil {
+		return t.Hour(), t.Minute(), nil
+	} else {
+		fallbackLayouts := []string{
+			time.RFC3339Nano,
+			time.RFC3339,
+			"2006-01-02 15:04:05",
+			"2006-01-02T15:04:05",
+			"2006-01-02 15:04",
+			"2006-01-02T15:04",
+		}
+
+		for _, layout := range fallbackLayouts {
+			if parsed, altErr := time.Parse(layout, value); altErr == nil {
+				return parsed.Hour(), parsed.Minute(), nil
+			}
+		}
+
+		timePattern := regexp.MustCompile(`\d{1,2}:\d{2}(?::\d{2})?`)
+		if match := timePattern.FindString(value); match != "" && match != value {
+			return parseHourMinute(match)
+		}
+
+		return 0, 0, fmt.Errorf("invalid time format %q: %w", value, err)
+	}
+}
+
+func resolveBranchHours(branch *models.Branch) (int, int, error) {
+	const (
+		defaultOpenMinutes  = 8 * 60
+		defaultCloseMinutes = 21 * 60
+	)
+
+	if branch == nil {
+		return defaultOpenMinutes, defaultCloseMinutes, nil
+	}
+
+	// Convert branch time.Time fields to strings if present, otherwise treat as empty
+	openStr := ""
+	if !branch.OpenTime.IsZero() {
+		openStr = branch.OpenTime.Format("15:04")
+	}
+
+	closeStr := ""
+	if !branch.CloseTime.IsZero() {
+		closeStr = branch.CloseTime.Format("15:04")
+	}
+
+	openStr = strings.TrimSpace(openStr)
+	closeStr = strings.TrimSpace(closeStr)
+
+	openMinutes := defaultOpenMinutes
+	if openStr != "" {
+		hour, minute, err := parseHourMinute(openStr)
+		if err != nil {
+			return 0, 0, fmt.Errorf("invalid branch open_time: %w", err)
+		}
+		openMinutes = hour*60 + minute
+	}
+
+	closeMinutes := defaultCloseMinutes
+	if closeStr != "" {
+		hour, minute, err := parseHourMinute(closeStr)
+		if err != nil {
+			return 0, 0, fmt.Errorf("invalid branch close_time: %w", err)
+		}
+		closeMinutes = hour*60 + minute
+	}
+
+	if closeMinutes <= openMinutes {
+		return 0, 0, fmt.Errorf("branch closing time must be after opening time")
+	}
+
+	return openMinutes, closeMinutes, nil
+}
+
+func formatSessionTime(t *time.Time) string {
+	if t == nil {
+		return "unknown"
+	}
+	return t.Format("15:04")
+}
+
+func formatSessionDate(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format("2006-01-02")
+}
+
+type roomConflictRecord struct {
+	RoomID       *uint      `gorm:"column:room_id"`
+	SessionID    uint       `gorm:"column:session_id"`
+	ScheduleID   uint       `gorm:"column:schedule_id"`
+	ScheduleName string     `gorm:"column:schedule_name"`
+	SessionDate  *time.Time `gorm:"column:session_date"`
+	StartTime    *time.Time `gorm:"column:start_time"`
+	EndTime      *time.Time `gorm:"column:end_time"`
+}
+
+func findRoomConflicts(roomID uint, candidateSessions []models.Schedule_Sessions, excludeScheduleID *uint) ([]roomConflictRecord, error) {
+	if roomID == 0 || len(candidateSessions) == 0 {
+		return nil, nil
+	}
+
+	minDate, maxDate := getSessionDateRange(candidateSessions)
+	if minDate.IsZero() || maxDate.IsZero() {
+		return nil, nil
+	}
+
+	var existingSessions []roomConflictRecord
+	query := database.DB.Table("schedule_sessions").
+		Select("schedule_sessions.room_id, schedule_sessions.id AS session_id, schedule_sessions.schedule_id, schedules.schedule_name, schedule_sessions.session_date, schedule_sessions.start_time, schedule_sessions.end_time").
+		Joins("JOIN schedules ON schedules.id = schedule_sessions.schedule_id").
+		Where("(schedule_sessions.room_id = ? OR (schedule_sessions.room_id IS NULL AND schedules.default_room_id = ?))", roomID, roomID).
+		Where("schedule_sessions.session_date BETWEEN ? AND ?", minDate, maxDate).
+		Where("schedule_sessions.status NOT IN ?", []string{"cancelled", "no-show"}).
+		Where("schedules.status IN ?", []string{"assigned", "scheduled"})
+
+	if excludeScheduleID != nil {
+		query = query.Where("schedule_sessions.schedule_id <> ?", *excludeScheduleID)
+	}
+
+	if err := query.Find(&existingSessions).Error; err != nil {
+		return nil, err
+	}
+
+	conflicts := make([]roomConflictRecord, 0, len(existingSessions))
+	for _, row := range existingSessions {
+		existing := models.Schedule_Sessions{
+			Session_date: row.SessionDate,
+			Start_time:   row.StartTime,
+			End_time:     row.EndTime,
+		}
+
+		for _, candidate := range candidateSessions {
+			if sessionsOverlapOnSameDay(existing, candidate) {
+				conflicts = append(conflicts, row)
+				break
+			}
+		}
+	}
+
+	return conflicts, nil
+}
+
+type scheduleConflictRow struct {
+	SessionID    uint       `gorm:"column:session_id"`
+	ScheduleID   uint       `gorm:"column:schedule_id"`
+	ScheduleName string     `gorm:"column:schedule_name"`
+	SessionDate  *time.Time `gorm:"column:session_date"`
+	StartTime    *time.Time `gorm:"column:start_time"`
+	EndTime      *time.Time `gorm:"column:end_time"`
+}
+
+type participantConflictRow struct {
+	scheduleConflictRow
+	UserID uint `gorm:"column:user_id"`
+}
+
+type studentConflictRow struct {
+	scheduleConflictRow
+	StudentID uint `gorm:"column:student_id"`
+}
+
+func copySessions(src []models.Schedule_Sessions) []models.Schedule_Sessions {
+	cloned := make([]models.Schedule_Sessions, len(src))
+	for i, session := range src {
+		cloned[i] = session
+		if session.Session_date != nil {
+			dateCopy := *session.Session_date
+			cloned[i].Session_date = &dateCopy
+		}
+		if session.Start_time != nil {
+			startCopy := *session.Start_time
+			cloned[i].Start_time = &startCopy
+		}
+		if session.End_time != nil {
+			endCopy := *session.End_time
+			cloned[i].End_time = &endCopy
+		}
+	}
+	return cloned
+}
+
+func sessionsToPreview(sessions []models.Schedule_Sessions) []SessionPreview {
+	previews := make([]SessionPreview, 0, len(sessions))
+	for _, session := range sessions {
+		preview := SessionPreview{
+			SessionNumber: session.Session_number,
+			WeekNumber:    session.Week_number,
+			Date:          formatSessionDate(session.Session_date),
+			StartTime:     formatSessionTime(session.Start_time),
+			EndTime:       formatSessionTime(session.End_time),
+			Notes:         strings.TrimSpace(session.Notes),
+		}
+		if preview.Notes == "" {
+			preview.Notes = ""
+		}
+		previews = append(previews, preview)
+	}
+	return previews
+}
+
+func buildGroupPaymentSummary(group *models.Group) GroupPaymentSummary {
+	summary := GroupPaymentSummary{
+		GroupID:            group.ID,
+		GroupName:          group.GroupName,
+		GroupPaymentStatus: group.PaymentStatus,
+		MemberTotals:       map[string]int{"pending": 0, "deposit_paid": 0, "fully_paid": 0},
+		RequireDeposit:     true,
+	}
+
+	for _, member := range group.Members {
+		status := strings.ToLower(strings.TrimSpace(member.PaymentStatus))
+		if status == "" {
+			status = "pending"
+		}
+		if _, ok := summary.MemberTotals[status]; !ok {
+			summary.MemberTotals[status] = 0
+		}
+		summary.MemberTotals[status]++
+		if status == "deposit_paid" || status == "fully_paid" {
+			summary.EligibleMembers++
+		} else {
+			summary.IneligibleMembers++
+		}
+
+		studentName := ""
+		if member.Student.ID != 0 {
+			studentName = strings.TrimSpace(member.Student.NicknameEn)
+			if studentName == "" {
+				fullEn := strings.TrimSpace(strings.TrimSpace(member.Student.FirstNameEn + " " + member.Student.LastNameEn))
+				if fullEn != "" {
+					studentName = fullEn
+				} else {
+					fullTh := strings.TrimSpace(strings.TrimSpace(member.Student.FirstName + " " + member.Student.LastName))
+					if fullTh != "" {
+						studentName = fullTh
+					}
+				}
+			}
+			if studentName == "" {
+				studentName = fmt.Sprintf("Student #%d", member.Student.ID)
+			}
+		}
+
+		summary.Members = append(summary.Members, GroupPaymentMember{
+			MemberID:      member.ID,
+			StudentID:     member.StudentID,
+			StudentName:   studentName,
+			PaymentStatus: status,
+		})
+	}
+
+	return summary
+}
+
+func makeConflictSlot(row scheduleConflictRow) ScheduleConflictSlot {
+	return ScheduleConflictSlot{
+		ScheduleID:   row.ScheduleID,
+		ScheduleName: row.ScheduleName,
+		SessionID:    row.SessionID,
+		SessionDate:  formatSessionDate(row.SessionDate),
+		StartTime:    formatSessionTime(row.StartTime),
+		EndTime:      formatSessionTime(row.EndTime),
+	}
+}
+
+func collectGroupActiveSchedule(groupID uint) (*GroupConflictInfo, error) {
+	if groupID == 0 {
+		return nil, nil
+	}
+
+	var existing models.Schedules
+	result := database.DB.Where("group_id = ? AND status IN ? AND schedule_type = ?", groupID, []string{"assigned", "scheduled"}, "class").Order("updated_at DESC").First(&existing)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, result.Error
+	}
+
+	var startDatePtr *time.Time
+	if !existing.Start_date.IsZero() {
+		startCopy := existing.Start_date
+		startDatePtr = &startCopy
+	}
+
+	var estimatedEndPtr *time.Time
+	if !existing.Estimated_end_date.IsZero() {
+		endCopy := existing.Estimated_end_date
+		estimatedEndPtr = &endCopy
+	}
+
+	return &GroupConflictInfo{
+		ScheduleID:       existing.ID,
+		ScheduleName:     existing.ScheduleName,
+		Status:           existing.Status,
+		StartDate:        startDatePtr,
+		EstimatedEndDate: estimatedEndPtr,
+	}, nil
+}
+
+func collectTeacherConflictDetail(teacherID *uint, candidateSessions []models.Schedule_Sessions, minDate, maxDate time.Time, excludeScheduleID *uint) (*TeacherConflictDetail, error) {
+	if teacherID == nil || *teacherID == 0 || len(candidateSessions) == 0 || minDate.IsZero() || maxDate.IsZero() {
+		return nil, nil
+	}
+
+	var rows []scheduleConflictRow
+	query := database.DB.Table("schedule_sessions").
+		Select("schedule_sessions.id AS session_id, schedule_sessions.schedule_id, schedules.schedule_name, schedule_sessions.session_date, schedule_sessions.start_time, schedule_sessions.end_time").
+		Joins("JOIN schedules ON schedules.id = schedule_sessions.schedule_id").
+		Where("(schedule_sessions.assigned_teacher_id = ? OR schedules.default_teacher_id = ?)", *teacherID, *teacherID).
+		Where("schedule_sessions.status NOT IN ?", []string{"cancelled", "no-show"}).
+		Where("schedules.status IN ?", []string{"assigned", "scheduled"}).
+		Where("schedule_sessions.session_date BETWEEN ? AND ?", minDate, maxDate)
+	if excludeScheduleID != nil {
+		query = query.Where("schedule_sessions.schedule_id <> ?", *excludeScheduleID)
+	}
+	if err := query.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	slots := make([]ScheduleConflictSlot, 0)
+	for _, row := range rows {
+		existing := models.Schedule_Sessions{
+			Session_date: row.SessionDate,
+			Start_time:   row.StartTime,
+			End_time:     row.EndTime,
+		}
+		for _, candidate := range candidateSessions {
+			if sessionsOverlapOnSameDay(existing, candidate) {
+				slots = append(slots, makeConflictSlot(row))
+				break
+			}
+		}
+	}
+
+	if len(slots) == 0 {
+		return nil, nil
+	}
+
+	var teacher models.User
+	if err := database.DB.Select("id, username").First(&teacher, *teacherID).Error; err != nil {
+		teacher = models.User{BaseModel: models.BaseModel{ID: *teacherID}, Username: fmt.Sprintf("Teacher #%d", *teacherID)}
+	}
+
+	return &TeacherConflictDetail{
+		TeacherID:   *teacherID,
+		TeacherName: teacher.Username,
+		Conflicts:   slots,
+	}, nil
+}
+
+func collectParticipantConflictDetails(userIDs []uint, candidateSessions []models.Schedule_Sessions, minDate, maxDate time.Time, excludeScheduleID *uint) ([]ParticipantConflictDetail, error) {
+	if len(userIDs) == 0 || len(candidateSessions) == 0 || minDate.IsZero() || maxDate.IsZero() {
+		return nil, nil
+	}
+
+	var rows []participantConflictRow
+	query := database.DB.Table("schedule_sessions").
+		Select("schedule_participants.user_id AS user_id, schedule_sessions.id AS session_id, schedule_sessions.schedule_id, schedules.schedule_name, schedule_sessions.session_date, schedule_sessions.start_time, schedule_sessions.end_time").
+		Joins("JOIN schedules ON schedules.id = schedule_sessions.schedule_id").
+		Joins("JOIN schedule_participants ON schedule_participants.schedule_id = schedules.id").
+		Where("schedule_participants.user_id IN ?", userIDs).
+		Where("schedule_sessions.status NOT IN ?", []string{"cancelled", "no-show"}).
+		Where("schedules.status IN ?", []string{"assigned", "scheduled"}).
+		Where("schedule_sessions.session_date BETWEEN ? AND ?", minDate, maxDate)
+	if excludeScheduleID != nil {
+		query = query.Where("schedule_sessions.schedule_id <> ?", *excludeScheduleID)
+	}
+	if err := query.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	conflictsByUser := make(map[uint][]ScheduleConflictSlot)
+	for _, row := range rows {
+		existing := models.Schedule_Sessions{Session_date: row.SessionDate, Start_time: row.StartTime, End_time: row.EndTime}
+		for _, candidate := range candidateSessions {
+			if sessionsOverlapOnSameDay(existing, candidate) {
+				conflictsByUser[row.UserID] = append(conflictsByUser[row.UserID], makeConflictSlot(row.scheduleConflictRow))
+				break
+			}
+		}
+	}
+
+	if len(conflictsByUser) == 0 {
+		return nil, nil
+	}
+
+	userIDsUnique := make([]uint, 0, len(conflictsByUser))
+	for id := range conflictsByUser {
+		userIDsUnique = append(userIDsUnique, id)
+	}
+	sort.Slice(userIDsUnique, func(i, j int) bool { return userIDsUnique[i] < userIDsUnique[j] })
+
+	var users []models.User
+	if err := database.DB.Select("id, username").Where("id IN ?", userIDsUnique).Find(&users).Error; err != nil {
+		return nil, err
+	}
+	usernames := make(map[uint]string, len(users))
+	for _, u := range users {
+		usernames[u.ID] = u.Username
+	}
+
+	details := make([]ParticipantConflictDetail, 0, len(conflictsByUser))
+	for _, id := range userIDsUnique {
+		conflicts := conflictsByUser[id]
+		if len(conflicts) == 0 {
+			continue
+		}
+		details = append(details, ParticipantConflictDetail{
+			UserID:    id,
+			Username:  usernames[id],
+			Conflicts: conflicts,
+		})
+	}
+
+	return details, nil
+}
+
+func collectStudentConflictDetails(group *models.Group, candidateSessions []models.Schedule_Sessions, minDate, maxDate time.Time, excludeScheduleID *uint) ([]StudentConflictDetail, error) {
+	if group == nil || len(group.Members) == 0 || len(candidateSessions) == 0 || minDate.IsZero() || maxDate.IsZero() {
+		return nil, nil
+	}
+
+	studentIDs := make([]uint, 0, len(group.Members))
+	studentsMap := make(map[uint]models.GroupMember, len(group.Members))
+	for _, member := range group.Members {
+		studentIDs = append(studentIDs, member.StudentID)
+		studentsMap[member.StudentID] = member
+	}
+
+	var rows []studentConflictRow
+	query := database.DB.Table("schedule_sessions").
+		Select("group_members.student_id AS student_id, schedule_sessions.id AS session_id, schedule_sessions.schedule_id, schedules.schedule_name, schedule_sessions.session_date, schedule_sessions.start_time, schedule_sessions.end_time").
+		Joins("JOIN schedules ON schedules.id = schedule_sessions.schedule_id").
+		Joins("JOIN `groups` ON schedules.group_id = `groups`.id").
+		Joins("JOIN group_members ON group_members.group_id = `groups`.id").
+		Where("group_members.student_id IN ?", studentIDs).
+		Where("schedule_sessions.status NOT IN ?", []string{"cancelled", "no-show"}).
+		Where("schedules.status IN ?", []string{"assigned", "scheduled"}).
+		Where("schedule_sessions.session_date BETWEEN ? AND ?", minDate, maxDate)
+	if excludeScheduleID != nil {
+		query = query.Where("schedule_sessions.schedule_id <> ?", *excludeScheduleID)
+	}
+	if err := query.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	conflictsByStudent := make(map[uint][]ScheduleConflictSlot)
+	for _, row := range rows {
+		existing := models.Schedule_Sessions{Session_date: row.SessionDate, Start_time: row.StartTime, End_time: row.EndTime}
+		for _, candidate := range candidateSessions {
+			if sessionsOverlapOnSameDay(existing, candidate) {
+				conflictsByStudent[row.StudentID] = append(conflictsByStudent[row.StudentID], makeConflictSlot(row.scheduleConflictRow))
+				break
+			}
+		}
+	}
+
+	if len(conflictsByStudent) == 0 {
+		return nil, nil
+	}
+
+	studentIDsUnique := make([]uint, 0, len(conflictsByStudent))
+	for id := range conflictsByStudent {
+		studentIDsUnique = append(studentIDsUnique, id)
+	}
+	sort.Slice(studentIDsUnique, func(i, j int) bool { return studentIDsUnique[i] < studentIDsUnique[j] })
+
+	details := make([]StudentConflictDetail, 0, len(conflictsByStudent))
+	for _, sid := range studentIDsUnique {
+		conflicts := conflictsByStudent[sid]
+		member := studentsMap[sid]
+
+		studentName := ""
+		if member.Student.ID != 0 {
+			studentName = strings.TrimSpace(member.Student.NicknameEn)
+			if studentName == "" {
+				fullEn := strings.TrimSpace(strings.TrimSpace(member.Student.FirstNameEn + " " + member.Student.LastNameEn))
+				if fullEn != "" {
+					studentName = fullEn
+				} else {
+					fullTh := strings.TrimSpace(strings.TrimSpace(member.Student.FirstName + " " + member.Student.LastName))
+					if fullTh != "" {
+						studentName = fullTh
+					}
+				}
+			}
+		}
+		var userIDPtr *uint
+		if member.Student.UserID != nil {
+			userID := *member.Student.UserID
+			userIDPtr = &userID
+		}
+
+		details = append(details, StudentConflictDetail{
+			StudentID:   sid,
+			StudentName: studentName,
+			UserID:      userIDPtr,
+			Conflicts:   conflicts,
+		})
+	}
+
+	return details, nil
+}
+
+func generateScheduleConflictReport(req CreateScheduleRequest, group *models.Group, candidateSessions []models.Schedule_Sessions, minDate, maxDate time.Time, excludeScheduleID *uint, opts conflictReportOptions) (*ScheduleConflictReport, error) {
+	report := &ScheduleConflictReport{}
+
+	scheduleType := strings.ToLower(strings.TrimSpace(req.ScheduleType))
+	if scheduleType == "class" && req.GroupID != nil {
+		groupConflict, err := collectGroupActiveSchedule(*req.GroupID)
+		if err != nil {
+			return nil, err
+		}
+		report.GroupConflict = groupConflict
+	}
+
+	if req.DefaultRoomID != nil && *req.DefaultRoomID != 0 {
+		roomConflicts, err := findRoomConflicts(*req.DefaultRoomID, candidateSessions, excludeScheduleID)
+		if err != nil {
+			return nil, err
+		}
+		if len(roomConflicts) > 0 {
+			details := make([]RoomConflictDetail, 0, len(roomConflicts))
+			for _, conflict := range roomConflicts {
+				details = append(details, RoomConflictDetail{
+					RoomID:       *req.DefaultRoomID,
+					ExistingRoom: conflict.RoomID,
+					SessionID:    conflict.SessionID,
+					ScheduleID:   conflict.ScheduleID,
+					ScheduleName: conflict.ScheduleName,
+					SessionDate:  formatSessionDate(conflict.SessionDate),
+					StartTime:    formatSessionTime(conflict.StartTime),
+					EndTime:      formatSessionTime(conflict.EndTime),
+				})
+			}
+			report.RoomConflicts = append(report.RoomConflicts, RoomConflictSummary{RoomID: *req.DefaultRoomID, Conflicts: details})
+		}
+	}
+
+	teacherDetail, err := collectTeacherConflictDetail(req.DefaultTeacherID, candidateSessions, minDate, maxDate, excludeScheduleID)
+	if err != nil {
+		return nil, err
+	}
+	if teacherDetail != nil {
+		report.TeacherConflicts = append(report.TeacherConflicts, *teacherDetail)
+	}
+
+	participantDetails, err := collectParticipantConflictDetails(req.ParticipantUserIDs, candidateSessions, minDate, maxDate, excludeScheduleID)
+	if err != nil {
+		return nil, err
+	}
+	if len(participantDetails) > 0 {
+		report.ParticipantConflicts = participantDetails
+	}
+
+	if opts.IncludeStudentConflicts {
+		studentDetails, err := collectStudentConflictDetails(group, candidateSessions, minDate, maxDate, excludeScheduleID)
+		if err != nil {
+			return nil, err
+		}
+		if len(studentDetails) > 0 {
+			report.StudentConflicts = studentDetails
+		}
+	}
+
+	return report, nil
+}
 
 // CreateSchedule - สร้าง schedule ใหม่ (เฉพาะ admin และ owner)
 func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
-	// ตรวจสอบ role
 	userRole := c.Locals("role")
 	if userRole != "admin" && userRole != "owner" {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Only admin and owner can create schedules"})
@@ -75,7 +821,6 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// Normalize optional numeric fields: treat 0 as null (pointer = nil)
 	if req.GroupID != nil && *req.GroupID == 0 {
 		req.GroupID = nil
 	}
@@ -86,24 +831,38 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 		req.DefaultRoomID = nil
 	}
 
-	// For non-class schedules, ignore any provided group_id entirely
-	if req.ScheduleType != "class" {
+	scheduleType := strings.ToLower(req.ScheduleType)
+	if scheduleType != "class" {
 		req.GroupID = nil
 	}
 
-	// Validate schedule type specific requirements
-	if req.ScheduleType == "class" {
+	autoReschedule := req.AutoRescheduleHoliday || req.AutoRescheduleHolidaysAlias
+
+	if req.HoursPerSession <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "hours_per_session must be greater than zero"})
+	}
+	if req.TotalHours <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "total_hours must be greater than zero"})
+	}
+	if req.TotalHours%req.HoursPerSession != 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "total_hours must be divisible by hours_per_session"})
+	}
+	totalSessions := req.TotalHours / req.HoursPerSession
+
+	var branch *models.Branch
+	branchHours := services.BranchHours{OpenMinutes: 8 * 60, CloseMinutes: 21 * 60}
+	sessionSlots := make([]services.SessionSlot, 0, len(req.SessionTimes))
+
+	if scheduleType == "class" {
 		if req.GroupID == nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "group_id is required for class schedules"})
 		}
 
-		// Validate that the group exists and has members with proper payment status
 		var group models.Group
-		if err := database.DB.Preload("Members").First(&group, *req.GroupID).Error; err != nil {
+		if err := database.DB.Preload("Members").Preload("Course.Branch").First(&group, *req.GroupID).Error; err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Group not found"})
 		}
 
-		// Check if group has members with appropriate payment status
 		hasEligibleMembers := false
 		for _, member := range group.Members {
 			if member.PaymentStatus == "deposit_paid" || member.PaymentStatus == "fully_paid" {
@@ -111,18 +870,63 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 				break
 			}
 		}
-
 		if !hasEligibleMembers {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Group must have at least one member with deposit paid or fully paid status"})
 		}
+
+		if group.CourseID != 0 && group.Course.ID == 0 {
+			if err := database.DB.Preload("Branch").First(&group.Course, group.CourseID).Error; err == nil {
+				branch = &group.Course.Branch
+			}
+		} else if group.Course.ID != 0 {
+			branch = &group.Course.Branch
+		}
+
+		openMinutes, closeMinutes, err := resolveBranchHours(branch)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		branchHours = services.BranchHours{OpenMinutes: openMinutes, CloseMinutes: closeMinutes}
+
+		if len(req.SessionTimes) > 0 {
+			if req.SessionPerWeek != len(req.SessionTimes) {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "session_per_week must match the number of session_times provided"})
+			}
+
+			seenWeekdays := make(map[int]struct{}, len(req.SessionTimes))
+			for _, slot := range req.SessionTimes {
+				if slot.Weekday < 0 || slot.Weekday > 6 {
+					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "session_times.weekday must be between 0 (Sunday) and 6 (Saturday)"})
+				}
+				if _, exists := seenWeekdays[slot.Weekday]; exists {
+					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "session_times contains duplicate weekdays"})
+				}
+
+				hour, minute, err := parseHourMinute(slot.StartTime)
+				if err != nil {
+					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("invalid start_time in session_times: %v", err)})
+				}
+
+				startMinutes := hour*60 + minute
+				endMinutes := startMinutes + req.HoursPerSession*60
+				if startMinutes < branchHours.OpenMinutes || endMinutes > branchHours.CloseMinutes {
+					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("session on weekday %d (%02d:%02d) is outside branch operating hours", slot.Weekday, hour, minute)})
+				}
+
+				seenWeekdays[slot.Weekday] = struct{}{}
+				sessionSlots = append(sessionSlots, services.SessionSlot{
+					Weekday:     time.Weekday(slot.Weekday),
+					StartHour:   hour,
+					StartMinute: minute,
+				})
+			}
+		}
 	} else {
-		// For event/appointment schedules
 		if len(req.ParticipantUserIDs) == 0 {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "participant_user_ids is required for event/appointment schedules"})
 		}
 	}
 
-	// ตรวจสอบว่า default teacher มีอยู่จริง (ถ้าระบุ)
 	if req.DefaultTeacherID != nil {
 		var teacher models.User
 		if err := database.DB.Where("id = ? AND role IN ?", *req.DefaultTeacherID, []string{"teacher", "admin", "owner"}).First(&teacher).Error; err != nil {
@@ -130,31 +934,38 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 		}
 	}
 
-	// Check for potential schedule conflicts to prevent duplicates
-	if err := checkScheduleConflicts(req, userID); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	if len(sessionSlots) == 0 && strings.TrimSpace(req.SessionStartTime) == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "session_start_time is required when session_times are not provided"})
 	}
 
-	// เริ่ม transaction
-	tx := database.DB.Begin()
+	if scheduleType == "class" && len(sessionSlots) == 0 {
+		hour, minute, err := parseHourMinute(req.SessionStartTime)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("invalid session_start_time: %v", err)})
+		}
+		startMinutes := hour*60 + minute
+		endMinutes := startMinutes + req.HoursPerSession*60
+		if startMinutes < branchHours.OpenMinutes || endMinutes > branchHours.CloseMinutes {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "session_start_time is outside branch operating hours"})
+		}
+	}
 
-	// Get admin user for assignment tracking
+	pattern := req.RecurringPattern
+	if len(sessionSlots) > 0 && strings.TrimSpace(pattern) == "" {
+		pattern = "custom"
+	}
+
 	var assignedUser models.User
-	if err := tx.First(&assignedUser, userID).Error; err != nil {
-		tx.Rollback()
+	if err := database.DB.First(&assignedUser, userID).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to get user info"})
 	}
 
-	// Determine auto-reschedule flag supporting both field names
-	autoReschedule := req.AutoRescheduleHoliday || req.AutoRescheduleHolidaysAlias
-
-	// สร้าง schedule
 	schedule := models.Schedules{
 		ScheduleName:            req.ScheduleName,
 		ScheduleType:            req.ScheduleType,
 		GroupID:                 req.GroupID,
 		CreatedByUserID:         &userID,
-		Recurring_pattern:       req.RecurringPattern,
+		Recurring_pattern:       pattern,
 		Total_hours:             req.TotalHours,
 		Hours_per_session:       req.HoursPerSession,
 		Session_per_week:        req.SessionPerWeek,
@@ -162,20 +973,77 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 		Estimated_end_date:      req.EstimatedEndDate,
 		DefaultTeacherID:        req.DefaultTeacherID,
 		DefaultRoomID:           req.DefaultRoomID,
-		Status:                  "assigned", // เริ่มต้นเป็น assigned
+		Status:                  "assigned",
 		Auto_Reschedule_holiday: autoReschedule,
 		Notes:                   req.Notes,
 		Admin_assigned:          assignedUser.Username,
 	}
 
-	// บันทึก schedule
+	var (
+		sessions []models.Schedule_Sessions
+		err      error
+	)
+	if len(sessionSlots) > 0 {
+		sessions, err = services.GenerateScheduleSessionsWithSlots(schedule, sessionSlots, totalSessions, req.HoursPerSession, branchHours)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+	} else {
+		sessions, err = services.GenerateScheduleSessions(schedule, req.SessionStartTime, req.CustomRecurringDays)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Failed to generate sessions: " + err.Error()})
+		}
+	}
+
+	if len(sessions) == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "no sessions generated for the provided configuration"})
+	}
+
+	minDate, maxDate := getSessionDateRange(sessions)
+	startYear := schedule.Start_date.Year()
+	if !minDate.IsZero() && minDate.Year() < startYear {
+		startYear = minDate.Year()
+	}
+	endYear := schedule.Estimated_end_date.Year()
+	if endYear < startYear {
+		endYear = startYear
+	}
+	if !maxDate.IsZero() && maxDate.Year() > endYear {
+		endYear = maxDate.Year()
+	}
+
+	// Apply holiday rescheduling if enabled
+	if autoReschedule {
+		var holidayDates []time.Time
+		if _, err := services.GetThaiHolidaysWithNames(startYear, endYear); err == nil {
+			// Fetch dates for rescheduling
+			if holidays, err := services.GetThaiHolidays(startYear, endYear); err == nil {
+				holidayDates = holidays
+			}
+		}
+
+		if len(holidayDates) > 0 {
+			sessions = services.RescheduleSessions(sessions, holidayDates)
+		}
+	}
+
+	services.ReindexSessions(sessions, schedule.Start_date)
+	minDate, maxDate = getSessionDateRange(sessions)
+	if !maxDate.IsZero() {
+		schedule.Estimated_end_date = maxDate
+	}
+
+	if err := checkScheduleConflicts(req, userID, sessions); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	tx := database.DB.Begin()
 	if err := tx.Create(&schedule).Error; err != nil {
 		tx.Rollback()
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create schedule"})
 	}
 
-	// For event/appointment schedules - create participant records
-	if req.ScheduleType != "class" && len(req.ParticipantUserIDs) > 0 {
+	if scheduleType != "class" && len(req.ParticipantUserIDs) > 0 {
 		for _, participantID := range req.ParticipantUserIDs {
 			var user models.User
 			if err := tx.First(&user, participantID).Error; err != nil {
@@ -189,8 +1057,6 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 				Role:       "participant",
 				Status:     "invited",
 			}
-
-			// Set organizer role for the creator
 			if participantID == userID {
 				participant.Role = "organizer"
 			}
@@ -202,65 +1068,38 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 		}
 	}
 
-	// สร้าง sessions ตาม recurring pattern
-	sessions, err := services.GenerateScheduleSessions(schedule, req.SessionStartTime, req.CustomRecurringDays)
-	if err != nil {
-		tx.Rollback()
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate sessions: " + err.Error()})
-	}
+	for i := range sessions {
+		sessions[i].ScheduleID = schedule.ID
+		sessions[i].AssignedTeacherID = req.DefaultTeacherID
+		sessions[i].RoomID = req.DefaultRoomID
 
-	// If estimated_end_date was not provided, set it to the date of the last generated session
-	if schedule.Estimated_end_date.IsZero() && len(sessions) > 0 {
-		last := sessions[len(sessions)-1]
-		if last.Session_date != nil {
-			schedule.Estimated_end_date = *last.Session_date
-			if err := tx.Model(&schedule).Update("estimated_end_date", schedule.Estimated_end_date).Error; err != nil {
-				tx.Rollback()
-				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to set estimated_end_date"})
-			}
-		}
-	}
-
-	// บันทึก sessions
-	for _, session := range sessions {
-		session.ScheduleID = schedule.ID
-		// Use default teacher and room if provided
-		session.AssignedTeacherID = req.DefaultTeacherID
-		session.RoomID = req.DefaultRoomID
-
-		// For class schedules: sessions require teacher confirmation -> start as 'assigned'
-		// For non-class: they can be 'scheduled' immediately
-		if strings.ToLower(schedule.ScheduleType) == "class" {
-			session.Status = "assigned"
-		} else if strings.ToLower(schedule.ScheduleType) != "class" {
-			session.Status = "scheduled"
+		if scheduleType == "class" {
+			sessions[i].Status = "assigned"
+		} else if strings.TrimSpace(sessions[i].Status) == "" {
+			sessions[i].Status = "scheduled"
 		}
 
-		if err := tx.Create(&session).Error; err != nil {
+		if err := tx.Create(&sessions[i]).Error; err != nil {
 			tx.Rollback()
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create sessions"})
 		}
 
-		// Schedule confirmation reminders for class sessions (T-24h and T-6h)
-		if strings.ToLower(schedule.ScheduleType) == "class" {
-			services.ScheduleTeacherConfirmReminders(session, schedule)
+		if scheduleType == "class" {
+			services.ScheduleTeacherConfirmReminders(sessions[i], schedule)
 		}
 	}
 
-	// Prepare notification recipients; send after commit to avoid tx conflicts
 	var notifyDefaultTeacherIDs []uint
 	var notifyParticipantIDs []uint
-	if req.ScheduleType == "class" && req.DefaultTeacherID != nil {
+	if scheduleType == "class" && req.DefaultTeacherID != nil {
 		notifyDefaultTeacherIDs = append(notifyDefaultTeacherIDs, *req.DefaultTeacherID)
-	} else if req.ScheduleType != "class" {
+	} else if scheduleType != "class" {
 		notifyParticipantIDs = append(notifyParticipantIDs, req.ParticipantUserIDs...)
 	}
 
 	tx.Commit()
 
-	// Send notifications after successful commit
 	notifService := notifsvc.NewService()
-	// Notify default teacher (class) – channel: normal
 	if len(notifyDefaultTeacherIDs) > 0 {
 		data := fiber.Map{
 			"link": fiber.Map{
@@ -280,7 +1119,6 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 		)
 		_ = notifService.EnqueueOrCreate(notifyDefaultTeacherIDs, payload)
 	}
-	// Notify participants (event/appointment invite) – channels: popup + normal
 	if len(notifyParticipantIDs) > 0 {
 		data := fiber.Map{
 			"link": fiber.Map{
@@ -301,13 +1139,655 @@ func (sc *ScheduleController) CreateSchedule(c *fiber.Ctx) error {
 		_ = notifService.EnqueueOrCreate(notifyParticipantIDs, payload)
 	}
 
-	// โหลดข้อมูลสมบูรณ์เพื่อส่งกลับ
 	database.DB.Preload("Group.Course").Preload("DefaultTeacher").Preload("DefaultRoom").Preload("CreatedBy").First(&schedule, schedule.ID)
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"message":  "Schedule created successfully",
 		"schedule": schedule,
 	})
+}
+
+// CheckRoomConflicts pre-validates if a room has scheduling conflicts for a proposed session plan.
+func (sc *ScheduleController) CheckRoomConflicts(c *fiber.Ctx) error {
+	userRole := c.Locals("role")
+	if userRole != "admin" && userRole != "owner" {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Only admin and owner can check room conflicts"})
+	}
+
+	var req CheckRoomConflictRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	roomIDSet := make(map[uint]struct{})
+	if req.RoomID != 0 {
+		roomIDSet[req.RoomID] = struct{}{}
+	}
+	for _, id := range req.RoomIDs {
+		if id != 0 {
+			roomIDSet[id] = struct{}{}
+		}
+	}
+
+	if len(roomIDSet) == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "at least one room_id must be provided"})
+	}
+
+	roomIDs := make([]uint, 0, len(roomIDSet))
+	for id := range roomIDSet {
+		roomIDs = append(roomIDs, id)
+	}
+	sort.Slice(roomIDs, func(i, j int) bool { return roomIDs[i] < roomIDs[j] })
+
+	var rooms []models.Room
+	if err := database.DB.Where("id IN ?", roomIDs).Find(&rooms).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": fmt.Sprintf("failed to fetch rooms: %v", err)})
+	}
+	roomsByID := make(map[uint]models.Room, len(rooms))
+	for _, room := range rooms {
+		roomsByID[room.ID] = room
+	}
+	if len(roomsByID) != len(roomIDs) {
+		missing := make([]string, 0)
+		for _, id := range roomIDs {
+			if _, ok := roomsByID[id]; !ok {
+				missing = append(missing, fmt.Sprintf("%d", id))
+			}
+		}
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("room_id(s) not found: %s", strings.Join(missing, ", "))})
+	}
+
+	if req.HoursPerSession <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "hours_per_session must be greater than zero"})
+	}
+	if req.TotalHours <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "total_hours must be greater than zero"})
+	}
+	if req.TotalHours%req.HoursPerSession != 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "total_hours must be divisible by hours_per_session"})
+	}
+	if req.SessionPerWeek <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "session_per_week must be greater than zero"})
+	}
+
+	pattern := strings.TrimSpace(req.RecurringPattern)
+	if pattern == "" {
+		pattern = "weekly"
+	}
+
+	branchHours := services.BranchHours{OpenMinutes: 8 * 60, CloseMinutes: 21 * 60}
+	if req.BranchID != nil {
+		var branch models.Branch
+		if err := database.DB.First(&branch, *req.BranchID).Error; err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Branch not found"})
+		}
+		openMinutes, closeMinutes, err := resolveBranchHours(&branch)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		branchHours = services.BranchHours{OpenMinutes: openMinutes, CloseMinutes: closeMinutes}
+	} else if primaryRoom, ok := roomsByID[roomIDs[0]]; ok && primaryRoom.BranchID != 0 {
+		var branch models.Branch
+		if err := database.DB.First(&branch, primaryRoom.BranchID).Error; err == nil {
+			if openMinutes, closeMinutes, err := resolveBranchHours(&branch); err == nil {
+				branchHours = services.BranchHours{OpenMinutes: openMinutes, CloseMinutes: closeMinutes}
+			}
+		}
+	}
+
+	sessionSlots := make([]services.SessionSlot, 0, len(req.SessionTimes))
+	if len(req.SessionTimes) > 0 {
+		if req.SessionPerWeek != len(req.SessionTimes) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "session_per_week must match the number of session_times provided"})
+		}
+
+		seenWeekdays := make(map[int]struct{}, len(req.SessionTimes))
+		for _, slot := range req.SessionTimes {
+			if slot.Weekday < 0 || slot.Weekday > 6 {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "session_times.weekday must be between 0 (Sunday) and 6 (Saturday)"})
+			}
+			if _, exists := seenWeekdays[slot.Weekday]; exists {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "session_times contains duplicate weekdays"})
+			}
+
+			hour, minute, err := parseHourMinute(slot.StartTime)
+			if err != nil {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("invalid start_time in session_times: %v", err)})
+			}
+
+			startMinutes := hour*60 + minute
+			endMinutes := startMinutes + req.HoursPerSession*60
+			if startMinutes < branchHours.OpenMinutes || endMinutes > branchHours.CloseMinutes {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("session on weekday %d (%02d:%02d) is outside branch operating hours", slot.Weekday, hour, minute)})
+			}
+
+			seenWeekdays[slot.Weekday] = struct{}{}
+			sessionSlots = append(sessionSlots, services.SessionSlot{
+				Weekday:     time.Weekday(slot.Weekday),
+				StartHour:   hour,
+				StartMinute: minute,
+			})
+		}
+		pattern = "custom"
+	}
+
+	if len(sessionSlots) == 0 && strings.TrimSpace(req.SessionStartTime) == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "session_start_time is required when session_times are not provided"})
+	}
+
+	if len(sessionSlots) == 0 {
+		hour, minute, err := parseHourMinute(req.SessionStartTime)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("invalid session_start_time: %v", err)})
+		}
+		startMinutes := hour*60 + minute
+		endMinutes := startMinutes + req.HoursPerSession*60
+		if startMinutes < branchHours.OpenMinutes || endMinutes > branchHours.CloseMinutes {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "session_start_time is outside branch operating hours"})
+		}
+	}
+
+	totalSessions := req.TotalHours / req.HoursPerSession
+	schedule := models.Schedules{
+		Recurring_pattern:  pattern,
+		Total_hours:        req.TotalHours,
+		Hours_per_session:  req.HoursPerSession,
+		Session_per_week:   req.SessionPerWeek,
+		Start_date:         req.StartDate,
+		Estimated_end_date: req.EstimatedEndDate,
+	}
+
+	var (
+		candidateSessions []models.Schedule_Sessions
+		err               error
+	)
+	if len(sessionSlots) > 0 {
+		candidateSessions, err = services.GenerateScheduleSessionsWithSlots(schedule, sessionSlots, totalSessions, req.HoursPerSession, branchHours)
+	} else {
+		candidateSessions, err = services.GenerateScheduleSessions(schedule, req.SessionStartTime, req.CustomRecurringDays)
+	}
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	allDetails := make([]RoomConflictDetail, 0)
+	perRoom := make([]RoomConflictSummary, 0, len(roomIDs))
+	for _, roomID := range roomIDs {
+		conflicts, err := findRoomConflicts(roomID, candidateSessions, req.ExcludeScheduleID)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": fmt.Sprintf("failed to check room conflicts for room %d: %v", roomID, err)})
+		}
+
+		roomDetails := make([]RoomConflictDetail, 0, len(conflicts))
+		for _, conflict := range conflicts {
+			roomDetails = append(roomDetails, RoomConflictDetail{
+				RoomID:       roomID,
+				ExistingRoom: conflict.RoomID,
+				SessionID:    conflict.SessionID,
+				ScheduleID:   conflict.ScheduleID,
+				ScheduleName: conflict.ScheduleName,
+				SessionDate:  formatSessionDate(conflict.SessionDate),
+				StartTime:    formatSessionTime(conflict.StartTime),
+				EndTime:      formatSessionTime(conflict.EndTime),
+			})
+		}
+
+		perRoom = append(perRoom, RoomConflictSummary{
+			RoomID:    roomID,
+			Conflicts: roomDetails,
+		})
+		allDetails = append(allDetails, roomDetails...)
+	}
+
+	return c.JSON(fiber.Map{
+		"has_conflict":     len(allDetails) > 0,
+		"conflicts":        allDetails,
+		"rooms":            perRoom,
+		"checked_room_ids": roomIDs,
+	})
+}
+
+// PreviewSchedule performs a dry-run validation of a schedule configuration and reports potential issues.
+func (sc *ScheduleController) PreviewSchedule(c *fiber.Ctx) error {
+	userRole := c.Locals("role")
+	if userRole != "admin" && userRole != "owner" {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Only admin and owner can preview schedules"})
+	}
+
+	var req CreateScheduleRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	if req.GroupID != nil && *req.GroupID == 0 {
+		req.GroupID = nil
+	}
+	if req.DefaultTeacherID != nil && *req.DefaultTeacherID == 0 {
+		req.DefaultTeacherID = nil
+	}
+	if req.DefaultRoomID != nil && *req.DefaultRoomID == 0 {
+		req.DefaultRoomID = nil
+	}
+
+	autoReschedule := req.AutoRescheduleHoliday || req.AutoRescheduleHolidaysAlias
+	issues := make([]SchedulePreviewIssue, 0)
+	blocking := false
+	canProceed := true
+
+	addIssue := func(severity, code, message string, details interface{}, fatal bool) {
+		issues = append(issues, SchedulePreviewIssue{
+			Severity: severity,
+			Code:     code,
+			Message:  message,
+			Details:  details,
+		})
+		if severity == "error" {
+			blocking = true
+		}
+		if fatal {
+			canProceed = false
+		}
+	}
+
+	scheduleType := strings.ToLower(strings.TrimSpace(req.ScheduleType))
+	if scheduleType == "" {
+		addIssue("error", "missing_schedule_type", "schedule_type is required", nil, true)
+	} else {
+		supportedTypes := map[string]bool{"class": true, "meeting": true, "event": true, "holiday": true, "appointment": true}
+		if !supportedTypes[scheduleType] {
+			addIssue("error", "invalid_schedule_type", fmt.Sprintf("unsupported schedule_type: %s", req.ScheduleType), nil, true)
+		}
+	}
+
+	if strings.TrimSpace(req.ScheduleName) == "" {
+		addIssue("error", "missing_schedule_name", "schedule_name is required", nil, false)
+	}
+
+	if req.TotalHours <= 0 {
+		addIssue("error", "invalid_total_hours", "total_hours must be greater than zero", nil, true)
+	}
+	if req.HoursPerSession <= 0 {
+		addIssue("error", "invalid_hours_per_session", "hours_per_session must be greater than zero", nil, true)
+	}
+	if req.SessionPerWeek <= 0 {
+		addIssue("error", "invalid_session_per_week", "session_per_week must be greater than zero", nil, true)
+	}
+	if req.TotalHours > 0 && req.HoursPerSession > 0 && req.TotalHours%req.HoursPerSession != 0 {
+		addIssue("error", "total_hours_not_divisible", "total_hours must be divisible by hours_per_session", nil, true)
+	}
+
+	if req.StartDate.IsZero() || req.EstimatedEndDate.IsZero() {
+		addIssue("error", "missing_dates", "start_date and estimated_end_date are required", nil, false)
+	}
+
+	branchHours := services.BranchHours{OpenMinutes: 8 * 60, CloseMinutes: 21 * 60}
+	var branch *models.Branch
+	var group *models.Group
+	var paymentSummary *GroupPaymentSummary
+
+	if scheduleType == "class" {
+		if req.GroupID == nil {
+			addIssue("error", "missing_group_id", "group_id is required for class schedules", nil, true)
+		} else {
+			var g models.Group
+			if err := database.DB.Preload("Members.Student.User").Preload("Course.Branch").First(&g, *req.GroupID).Error; err != nil {
+				addIssue("error", "group_not_found", fmt.Sprintf("group %d not found", *req.GroupID), nil, true)
+			} else {
+				group = &g
+				summary := buildGroupPaymentSummary(group)
+				paymentSummary = &summary
+				if summary.EligibleMembers == 0 {
+					addIssue("error", "insufficient_payment", "group must have at least one member with deposit paid or fully paid status", summary, false)
+				} else if summary.MemberTotals["pending"] > 0 {
+					addIssue("warning", "group_payment_pending", "some group members still have pending payment status", summary, false)
+				}
+				if group.Course.Branch.ID != 0 {
+					branch = &group.Course.Branch
+				}
+			}
+		}
+	} else {
+		if len(req.ParticipantUserIDs) == 0 {
+			addIssue("warning", "missing_participants", "participant_user_ids were not provided; they are required when the schedule is created", nil, false)
+		}
+	}
+
+	if branch != nil {
+		if open, close, err := resolveBranchHours(branch); err != nil {
+			addIssue("error", "invalid_branch_hours", err.Error(), nil, true)
+		} else {
+			branchHours = services.BranchHours{OpenMinutes: open, CloseMinutes: close}
+		}
+	}
+
+	if req.DefaultTeacherID != nil {
+		var teacher models.User
+		if err := database.DB.Where("id = ? AND role IN ?", *req.DefaultTeacherID, []string{"teacher", "admin", "owner"}).First(&teacher).Error; err != nil {
+			addIssue("error", "invalid_default_teacher", "default teacher not found or not authorized", nil, false)
+		}
+	}
+
+	totalSessions := 0
+	if req.TotalHours > 0 && req.HoursPerSession > 0 {
+		totalSessions = req.TotalHours / req.HoursPerSession
+	}
+	if totalSessions <= 0 {
+		addIssue("error", "no_sessions", "unable to derive session count from provided hours", nil, true)
+	}
+
+	pattern := strings.TrimSpace(req.RecurringPattern)
+
+	sessionSlots := make([]services.SessionSlot, 0, len(req.SessionTimes))
+	if len(req.SessionTimes) > 0 {
+		if req.SessionPerWeek != len(req.SessionTimes) {
+			addIssue("error", "session_times_mismatch", "session_per_week must match the number of session_times provided", nil, true)
+		}
+
+		seenWeekdays := make(map[int]struct{}, len(req.SessionTimes))
+		for _, slot := range req.SessionTimes {
+			if slot.Weekday < 0 || slot.Weekday > 6 {
+				addIssue("error", "invalid_weekday", "session_times.weekday must be between 0 (Sunday) and 6 (Saturday)", slot, true)
+				continue
+			}
+			if _, exists := seenWeekdays[slot.Weekday]; exists {
+				addIssue("error", "duplicate_weekday", fmt.Sprintf("session_times contains duplicate weekday %d", slot.Weekday), slot, true)
+				continue
+			}
+
+			hour, minute, err := parseHourMinute(slot.StartTime)
+			if err != nil {
+				addIssue("error", "invalid_session_time", fmt.Sprintf("invalid start_time in session_times: %v", err), slot, true)
+				continue
+			}
+
+			startMinutes := hour*60 + minute
+			endMinutes := startMinutes + req.HoursPerSession*60
+			if startMinutes < branchHours.OpenMinutes || endMinutes > branchHours.CloseMinutes {
+				addIssue("error", "session_outside_branch", fmt.Sprintf("session on weekday %d (%02d:%02d) is outside branch operating hours", slot.Weekday, hour, minute), slot, true)
+				continue
+			}
+
+			seenWeekdays[slot.Weekday] = struct{}{}
+			sessionSlots = append(sessionSlots, services.SessionSlot{
+				Weekday:     time.Weekday(slot.Weekday),
+				StartHour:   hour,
+				StartMinute: minute,
+			})
+		}
+		pattern = "custom"
+	}
+
+	if len(sessionSlots) == 0 {
+		if strings.TrimSpace(req.SessionStartTime) == "" {
+			addIssue("error", "missing_session_start_time", "session_start_time is required when session_times are not provided", nil, true)
+		}
+		if strings.TrimSpace(req.SessionStartTime) != "" {
+			hour, minute, err := parseHourMinute(req.SessionStartTime)
+			if err != nil {
+				addIssue("error", "invalid_session_start_time", fmt.Sprintf("invalid session_start_time: %v", err), nil, true)
+			} else {
+				startMinutes := hour*60 + minute
+				endMinutes := startMinutes + req.HoursPerSession*60
+				if startMinutes < branchHours.OpenMinutes || endMinutes > branchHours.CloseMinutes {
+					addIssue("error", "session_start_outside_branch", "session_start_time is outside branch operating hours", nil, true)
+				}
+			}
+		}
+		if len(sessionSlots) == 0 && strings.TrimSpace(pattern) == "" {
+			pattern = "weekly"
+		}
+	}
+
+	schedule := models.Schedules{
+		ScheduleName:            req.ScheduleName,
+		ScheduleType:            req.ScheduleType,
+		GroupID:                 req.GroupID,
+		Recurring_pattern:       pattern,
+		Total_hours:             req.TotalHours,
+		Hours_per_session:       req.HoursPerSession,
+		Session_per_week:        req.SessionPerWeek,
+		Start_date:              req.StartDate,
+		Estimated_end_date:      req.EstimatedEndDate,
+		DefaultTeacherID:        req.DefaultTeacherID,
+		DefaultRoomID:           req.DefaultRoomID,
+		Auto_Reschedule_holiday: autoReschedule,
+	}
+
+	var generatedSessions []models.Schedule_Sessions
+	originalSessions := make([]models.Schedule_Sessions, 0)
+	holidayImpacts := make([]HolidayImpact, 0)
+	conflictReport := &ScheduleConflictReport{}
+	sessionsGenerated := false
+	minDate := req.StartDate
+	maxDate := req.EstimatedEndDate
+	holidayDates := make([]time.Time, 0)
+
+	if canProceed && totalSessions > 0 {
+		var err error
+		if len(sessionSlots) > 0 {
+			generatedSessions, err = services.GenerateScheduleSessionsWithSlots(schedule, sessionSlots, totalSessions, req.HoursPerSession, branchHours)
+		} else {
+			generatedSessions, err = services.GenerateScheduleSessions(schedule, req.SessionStartTime, req.CustomRecurringDays)
+		}
+		if err != nil {
+			addIssue("error", "session_generation_failed", err.Error(), nil, true)
+		}
+
+		if len(generatedSessions) == 0 {
+			addIssue("error", "no_sessions_generated", "no sessions generated for the provided configuration", nil, true)
+		} else {
+			sessionsGenerated = true
+			originalSessions = copySessions(generatedSessions)
+			minDate, maxDate = getSessionDateRange(generatedSessions)
+			if minDate.IsZero() {
+				minDate = req.StartDate
+			}
+			if maxDate.IsZero() {
+				maxDate = req.EstimatedEndDate
+			}
+
+			startYear := minDate.Year()
+			if startYear > req.StartDate.Year() {
+				startYear = req.StartDate.Year()
+			}
+			endYear := maxDate.Year()
+			if endYear < req.EstimatedEndDate.Year() {
+				endYear = req.EstimatedEndDate.Year()
+			}
+
+			holidayNames := make(map[string]string)
+			if names, err := services.GetThaiHolidaysWithNames(startYear, endYear); err == nil {
+				holidayNames = names
+				for dateStr := range names {
+					if date, err := time.Parse("2006-01-02", dateStr); err == nil {
+						holidayDates = append(holidayDates, date)
+					}
+				}
+			} else {
+				addIssue("warning", "holiday_lookup_failed", fmt.Sprintf("failed to fetch holiday list: %v", err), nil, false)
+			}
+
+			// Build mapping from original date to rescheduled date BEFORE reindexing
+			originalToRescheduledDate := make(map[string]string)
+			if autoReschedule && len(holidayDates) > 0 {
+				// Create mapping before reschedule to track which dates moved
+				for _, origSession := range originalSessions {
+					origDate := formatSessionDate(origSession.Session_date)
+					if origDate != "" {
+						originalToRescheduledDate[origDate] = origDate // Initially map to itself
+					}
+				}
+
+				generatedSessions = services.RescheduleSessions(generatedSessions, holidayDates)
+
+				// Update mapping after reschedule to show new dates
+				holidayMap := make(map[string]bool)
+				for _, h := range holidayDates {
+					holidayMap[h.Format("2006-01-02")] = true
+				}
+
+				// Map rescheduled sessions by their position
+				rescheduledIdx := 0
+				for _, origSession := range originalSessions {
+					origDate := formatSessionDate(origSession.Session_date)
+					if origDate != "" && !holidayMap[origDate] {
+						// Non-holiday session keeps its date (but might get new number)
+						if rescheduledIdx < len(generatedSessions) {
+							newDate := formatSessionDate(generatedSessions[rescheduledIdx].Session_date)
+							originalToRescheduledDate[origDate] = newDate
+							rescheduledIdx++
+						}
+					}
+				}
+
+				// Holiday sessions are appended at the end
+				for _, origSession := range originalSessions {
+					origDate := formatSessionDate(origSession.Session_date)
+					if origDate != "" && holidayMap[origDate] {
+						if rescheduledIdx < len(generatedSessions) {
+							newDate := formatSessionDate(generatedSessions[rescheduledIdx].Session_date)
+							originalToRescheduledDate[origDate] = newDate
+							rescheduledIdx++
+						}
+					}
+				}
+			}
+
+			services.ReindexSessions(generatedSessions, schedule.Start_date)
+			newMin, newMax := getSessionDateRange(generatedSessions)
+			if !newMin.IsZero() {
+				minDate = newMin
+			}
+			if !newMax.IsZero() {
+				maxDate = newMax
+				schedule.Estimated_end_date = newMax
+			}
+
+			for _, session := range originalSessions {
+				date := formatSessionDate(session.Session_date)
+				if date == "" {
+					continue
+				}
+				if holidayName, ok := holidayNames[date]; ok {
+					impact := HolidayImpact{
+						SessionNumber:  session.Session_number,
+						Date:           date,
+						HolidayName:    holidayName,
+						WasRescheduled: autoReschedule,
+					}
+					if autoReschedule {
+						if newDate, exists := originalToRescheduledDate[date]; exists && newDate != date {
+							impact.ShiftedTo = newDate
+						} else if !exists || newDate == date {
+							impact.WasRescheduled = false
+						}
+					}
+					holidayImpacts = append(holidayImpacts, impact)
+				}
+			}
+
+			conflictOpts := conflictReportOptions{IncludeStudentConflicts: scheduleType == "class"}
+			if report, err := generateScheduleConflictReport(req, group, generatedSessions, minDate, maxDate, nil, conflictOpts); err != nil {
+				addIssue("error", "conflict_check_failed", fmt.Sprintf("failed to evaluate conflicts: %v", err), nil, false)
+			} else if report != nil {
+				conflictReport = report
+			}
+		}
+	}
+
+	if conflictReport != nil {
+		if conflictReport.GroupConflict != nil {
+			addIssue("error", "group_active_schedule", "group already has an active class schedule", conflictReport.GroupConflict, false)
+		}
+		for _, roomSummary := range conflictReport.RoomConflicts {
+			if len(roomSummary.Conflicts) > 0 {
+				addIssue("error", "room_conflict", fmt.Sprintf("room %d has %d conflicting session(s)", roomSummary.RoomID, len(roomSummary.Conflicts)), roomSummary, false)
+			}
+		}
+		for _, teacherDetail := range conflictReport.TeacherConflicts {
+			if len(teacherDetail.Conflicts) > 0 {
+				addIssue("error", "teacher_conflict", fmt.Sprintf("teacher %s has %d conflicting session(s)", teacherDetail.TeacherName, len(teacherDetail.Conflicts)), teacherDetail, false)
+			}
+		}
+		for _, participantDetail := range conflictReport.ParticipantConflicts {
+			if len(participantDetail.Conflicts) > 0 {
+				addIssue("error", "participant_conflict", fmt.Sprintf("participant %d has %d conflicting session(s)", participantDetail.UserID, len(participantDetail.Conflicts)), participantDetail, false)
+			}
+		}
+		for _, studentDetail := range conflictReport.StudentConflicts {
+			if len(studentDetail.Conflicts) > 0 {
+				addIssue("warning", "student_conflict", fmt.Sprintf("student %d appears in %d conflicting session(s)", studentDetail.StudentID, len(studentDetail.Conflicts)), studentDetail, false)
+			}
+		}
+	}
+
+	if len(holidayImpacts) > 0 && !autoReschedule {
+		addIssue("warning", "holiday_overlap", "some sessions fall on Thai public holidays", holidayImpacts, false)
+	}
+
+	canCreate := !blocking
+	sessionPreview := make([]SessionPreview, 0)
+	originalPreview := make([]SessionPreview, 0)
+	if sessionsGenerated {
+		sessionPreview = sessionsToPreview(generatedSessions)
+		originalPreview = sessionsToPreview(originalSessions)
+	}
+
+	branchInfo := fiber.Map{
+		"open_minutes":  branchHours.OpenMinutes,
+		"close_minutes": branchHours.CloseMinutes,
+	}
+	formatMinutes := func(minutes int) string {
+		if minutes < 0 {
+			return ""
+		}
+		hours := minutes / 60
+		mins := minutes % 60
+		return fmt.Sprintf("%02d:%02d", hours, mins)
+	}
+	branchInfo["open_time"] = formatMinutes(branchHours.OpenMinutes)
+	branchInfo["close_time"] = formatMinutes(branchHours.CloseMinutes)
+
+	conflictsMap := fiber.Map{}
+	if conflictReport != nil {
+		conflictsMap["group"] = conflictReport.GroupConflict
+		conflictsMap["rooms"] = conflictReport.RoomConflicts
+		conflictsMap["teachers"] = conflictReport.TeacherConflicts
+		conflictsMap["participants"] = conflictReport.ParticipantConflicts
+		conflictsMap["students"] = conflictReport.StudentConflicts
+	}
+
+	checkedRoomIDs := make([]uint, 0)
+	if req.DefaultRoomID != nil && *req.DefaultRoomID != 0 {
+		checkedRoomIDs = append(checkedRoomIDs, *req.DefaultRoomID)
+	}
+
+	summary := fiber.Map{
+		"schedule_name":      req.ScheduleName,
+		"schedule_type":      scheduleType,
+		"start_date":         formatSessionDate(&schedule.Start_date),
+		"estimated_end_date": formatSessionDate(&schedule.Estimated_end_date),
+		"total_hours":        req.TotalHours,
+		"hours_per_session":  req.HoursPerSession,
+		"session_per_week":   req.SessionPerWeek,
+		"total_sessions":     len(sessionPreview),
+	}
+
+	response := fiber.Map{
+		"can_create":        canCreate,
+		"issues":            issues,
+		"summary":           summary,
+		"sessions":          sessionPreview,
+		"original_sessions": originalPreview,
+		"holiday_impacts":   holidayImpacts,
+		"conflicts":         conflictsMap,
+		"group_payment":     paymentSummary,
+		"auto_reschedule":   autoReschedule,
+		"branch_hours":      branchInfo,
+		"checked_room_ids":  checkedRoomIDs,
+	}
+
+	return c.JSON(response)
 }
 
 // GetSchedules - ดู schedule ทั้งหมด (เฉพาะ admin และ owner)
@@ -349,8 +1829,8 @@ func (sc *ScheduleController) GetMySchedules(c *fiber.Ctx) error {
 	} else {
 		// นักเรียนดู schedule ที่ตัวเองเข้าร่วม (จาก group members)
 		err := database.DB.Table("schedules").
-			Joins("JOIN groups ON groups.id = schedules.group_id").
-			Joins("JOIN group_members ON group_members.group_id = groups.id").
+			Joins("JOIN `groups` ON `groups`.id = schedules.group_id").
+			Joins("JOIN group_members ON group_members.group_id = `groups`.id").
 			Joins("JOIN students ON students.id = group_members.student_id").
 			Where("students.user_id = ? AND schedules.status = ?", userID, "scheduled").
 			Preload("Group.Course").
@@ -480,8 +1960,8 @@ func (sc *ScheduleController) GetTeachersSchedules(c *fiber.Ctx) error {
 		// join to schedules/groups/courses to filter by branch
 		sessionsQuery = sessionsQuery.
 			Joins("JOIN schedules ON schedule_sessions.schedule_id = schedules.id").
-			Joins("LEFT JOIN groups ON schedules.group_id = groups.id").
-			Joins("LEFT JOIN courses ON groups.course_id = courses.id").
+			Joins("LEFT JOIN `groups` ON schedules.group_id = `groups`.id").
+			Joins("LEFT JOIN courses ON `groups`.course_id = courses.id").
 			Where("courses.branch_id = ?", branchID)
 	}
 
@@ -895,8 +2375,8 @@ func (sc *ScheduleController) GetCalendarView(c *fiber.Ctx) error {
 	} else if userRole == "student" {
 		// Students see only their group sessions
 		query = query.Joins("JOIN schedules ON schedule_sessions.schedule_id = schedules.id").
-			Joins("JOIN groups ON schedules.group_id = groups.id").
-			Joins("JOIN group_members ON group_members.group_id = groups.id").
+			Joins("JOIN `groups` ON schedules.group_id = `groups`.id").
+			Joins("JOIN group_members ON group_members.group_id = `groups`.id").
 			Joins("JOIN students ON students.id = group_members.student_id").
 			Where("students.user_id = ?", userID)
 	}
@@ -904,8 +2384,8 @@ func (sc *ScheduleController) GetCalendarView(c *fiber.Ctx) error {
 	// Admin/Owner can filter by branch
 	if (userRole == "admin" || userRole == "owner") && branchID != "" {
 		query = query.Joins("JOIN schedules ON schedule_sessions.schedule_id = schedules.id").
-			Joins("LEFT JOIN groups ON schedules.group_id = groups.id").
-			Joins("LEFT JOIN courses ON groups.course_id = courses.id").
+			Joins("LEFT JOIN `groups` ON schedules.group_id = `groups`.id").
+			Joins("LEFT JOIN courses ON `groups`.course_id = courses.id").
 			Where("courses.branch_id = ?", branchID)
 	}
 
@@ -1678,108 +3158,59 @@ func (sc *ScheduleController) GetSession(c *fiber.Ctx) error {
 }
 
 // checkScheduleConflicts ตรวจสอบการชนกันของตารางสำหรับการสร้างใหม่
-func checkScheduleConflicts(req CreateScheduleRequest, userID uint) error {
-	// For class schedules: check if same group already has active schedule
-	if req.ScheduleType == "class" && req.GroupID != nil {
-		var existingSchedules []models.Schedules
-		err := database.DB.Where("group_id = ? AND status IN ? AND schedule_type = ?",
-			*req.GroupID, []string{"assigned", "scheduled"}, "class").Find(&existingSchedules).Error
-		if err != nil {
-			return fmt.Errorf("failed to check existing schedules: %v", err)
-		}
+func checkScheduleConflicts(req CreateScheduleRequest, userID uint, candidateSessions []models.Schedule_Sessions) error {
+	scheduleType := strings.ToLower(req.ScheduleType)
 
-		if len(existingSchedules) > 0 {
-			return fmt.Errorf("group already has an active class schedule (ID: %d)", existingSchedules[0].ID)
-		}
+	minDate, maxDate := getSessionDateRange(candidateSessions)
+	if minDate.IsZero() {
+		minDate = req.StartDate
+	}
+	if maxDate.IsZero() {
+		maxDate = req.EstimatedEndDate
+	}
+	if maxDate.Before(minDate) {
+		maxDate = minDate
 	}
 
-	// For event/appointment schedules: check if same participants have overlapping events
-	if req.ScheduleType != "class" && len(req.ParticipantUserIDs) > 0 {
-		// Get overlapping time range (start_date to estimated_end_date)
-		startTime, err := time.Parse("15:04", req.SessionStartTime)
-		if err != nil {
-			return fmt.Errorf("invalid session start time for conflict check")
-		}
-
-		sessionDuration := time.Duration(req.HoursPerSession) * time.Hour
-		endTime := startTime.Add(sessionDuration)
-
-		// Check for overlapping sessions for any of the participants
-		for _, participantID := range req.ParticipantUserIDs {
-			var conflictingSessions []models.Schedule_Sessions
-			query := database.DB.Table("schedule_sessions").
-				Joins("JOIN schedules ON schedules.id = schedule_sessions.schedule_id").
-				Joins("JOIN schedule_participants ON schedule_participants.schedule_id = schedules.id").
-				Where("schedule_participants.user_id = ?", participantID).
-				Where("schedule_sessions.session_date BETWEEN ? AND ?", req.StartDate, req.EstimatedEndDate).
-				Where("schedule_sessions.status NOT IN ?", []string{"cancelled", "no-show"}).
-				Where("schedules.status IN ?", []string{"assigned", "scheduled"})
-
-			err := query.Find(&conflictingSessions).Error
-			if err != nil {
-				return fmt.Errorf("failed to check session conflicts: %v", err)
-			}
-
-			// Check time overlap for each conflicting session
-			for _, session := range conflictingSessions {
-				if session.Start_time != nil && session.End_time != nil {
-					sessionStart := session.Start_time.Format("15:04")
-					sessionEnd := session.End_time.Format("15:04")
-					newStart := startTime.Format("15:04")
-					newEnd := endTime.Format("15:04")
-
-					// Check if times overlap (not strictly before or after)
-					if !(newEnd <= sessionStart || sessionEnd <= newStart) {
-						var user models.User
-						database.DB.First(&user, participantID)
-						return fmt.Errorf("participant %s already has a conflicting session at %s-%s",
-							user.Username, sessionStart, sessionEnd)
-					}
-				}
-			}
-		}
+	report, err := generateScheduleConflictReport(req, nil, candidateSessions, minDate, maxDate, nil, conflictReportOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to evaluate conflicts: %v", err)
+	}
+	if report == nil {
+		return nil
 	}
 
-	// For teacher conflict: check if default teacher has overlapping sessions
-	if req.DefaultTeacherID != nil {
-		startTime, err := time.Parse("15:04", req.SessionStartTime)
-		if err != nil {
-			return fmt.Errorf("invalid session start time for teacher conflict check")
+	if scheduleType == "class" && req.GroupID != nil && report.GroupConflict != nil {
+		return fmt.Errorf("group already has an active class schedule (ID: %d)", report.GroupConflict.ScheduleID)
+	}
+
+	if len(report.ParticipantConflicts) > 0 {
+		conflict := report.ParticipantConflicts[0]
+		slot := conflict.Conflicts[0]
+		return fmt.Errorf("participant %s already has a conflicting session at %s-%s",
+			conflict.Username,
+			slot.StartTime,
+			slot.EndTime)
+	}
+
+	if len(report.TeacherConflicts) > 0 {
+		conflict := report.TeacherConflicts[0]
+		slot := conflict.Conflicts[0]
+		name := conflict.TeacherName
+		if strings.TrimSpace(name) == "" {
+			name = fmt.Sprintf("ID %d", conflict.TeacherID)
 		}
+		return fmt.Errorf("teacher %s already has a conflicting session at %s-%s",
+			name,
+			slot.StartTime,
+			slot.EndTime)
+	}
 
-		sessionDuration := time.Duration(req.HoursPerSession) * time.Hour
-		endTime := startTime.Add(sessionDuration)
-
-		var conflictingSessions []models.Schedule_Sessions
-		query := database.DB.Table("schedule_sessions").
-			Joins("JOIN schedules ON schedules.id = schedule_sessions.schedule_id").
-			Where("(schedules.default_teacher_id = ? OR schedule_sessions.assigned_teacher_id = ?)",
-				*req.DefaultTeacherID, *req.DefaultTeacherID).
-			Where("schedule_sessions.session_date BETWEEN ? AND ?", req.StartDate, req.EstimatedEndDate).
-			Where("schedule_sessions.status NOT IN ?", []string{"cancelled", "no-show"}).
-			Where("schedules.status IN ?", []string{"assigned", "scheduled"})
-
-		err = query.Find(&conflictingSessions).Error
-		if err != nil {
-			return fmt.Errorf("failed to check teacher conflicts: %v", err)
-		}
-
-		// Check time overlap for teacher sessions
-		for _, session := range conflictingSessions {
-			if session.Start_time != nil && session.End_time != nil {
-				sessionStart := session.Start_time.Format("15:04")
-				sessionEnd := session.End_time.Format("15:04")
-				newStart := startTime.Format("15:04")
-				newEnd := endTime.Format("15:04")
-
-				// Check if times overlap
-				if !(newEnd <= sessionStart || sessionEnd <= newStart) {
-					var teacher models.User
-					database.DB.First(&teacher, *req.DefaultTeacherID)
-					return fmt.Errorf("teacher %s already has a conflicting session at %s-%s",
-						teacher.Username, sessionStart, sessionEnd)
-				}
-			}
+	if len(report.RoomConflicts) > 0 {
+		room := report.RoomConflicts[0]
+		if len(room.Conflicts) > 0 {
+			slot := room.Conflicts[0]
+			return fmt.Errorf("room already booked at %s-%s", slot.StartTime, slot.EndTime)
 		}
 	}
 

@@ -7,6 +7,9 @@ Protected group `/api/schedules`
   recurring_pattern, total_hours, hours_per_session, session_per_week, max_students,
   start_date, estimated_end_date, auto_reschedule, notes, user_in_course_ids[], session_start_time,
   custom_recurring_days[]
+  - See `SCHEDULE-CLASS-CASE.md` for class-specific scenarios and payload examples.
+- POST /preview — dry-run validator (owner/admin). Generates the same sessions the create endpoint would and returns a readiness summary: room/teacher/participant conflicts, holiday impacts, group payment status (for class schedules), and whether the plan can be safely created. Works for every schedule type (`class`, `meeting`, `event`, `holiday`, `appointment`). For non-class types the preview still runs even if you omit `participant_user_ids`, but it will raise a warning because the final create call requires them.
+- POST /rooms/check-conflicts — pre-check room availability for a proposed schedule (owner/admin). Accepts either a single `room_id` or `room_ids[]` to evaluate multiple rooms in one call. Applicable to all schedule types; simply pass the timing fields you intend to use.
 
 - GET / — list all schedules (owner/admin) with filters: status, type, branch_id
 - GET /my — schedules for current user (teacher/admin/owner by assigned; student by enrollment)

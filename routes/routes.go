@@ -196,6 +196,8 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub, healthService *services.H
 	notifications.Patch("/:id/read", notificationController.MarkAsRead)
 	notifications.Patch("/mark-all-read", notificationController.MarkAllAsRead)
 	notifications.Delete("/:id", notificationController.DeleteNotification)
+	// Test endpoint: send popup notification for all scenarios (dev/testing)
+	notifications.Get("/test/popup", notificationController.TestWebSocketPopup)
 
 	// Log management routes (Admin/Owner only)
 	logs := protected.Group("/logs", middleware.RequireOwnerOrAdmin())
@@ -211,6 +213,8 @@ func SetupRoutes(app *fiber.App, wsHub *websocket.Hub, healthService *services.H
 
 	// Schedule CRUD operations
 	schedules.Post("/", middleware.RequireOwnerOrAdmin(), scheduleController.CreateSchedule)
+	schedules.Post("/preview", middleware.RequireOwnerOrAdmin(), scheduleController.PreviewSchedule)
+	schedules.Post("/rooms/check-conflicts", middleware.RequireOwnerOrAdmin(), scheduleController.CheckRoomConflicts)
 	schedules.Get("/", middleware.RequireOwnerOrAdmin(), scheduleController.GetSchedules)
 	schedules.Get("/teachers", middleware.RequireTeacherOrAbove(), scheduleController.GetTeachersSchedules)
 	// Alias singular path as requested

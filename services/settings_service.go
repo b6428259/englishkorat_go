@@ -49,6 +49,16 @@ var (
 	ErrSettingsValidation = errors.New("settings validation error")
 )
 
+// SettingsInternalError wraps non-user (server-side) failures with a short machine code
+// so the controller layer can surface a stable error code while hiding internals.
+type SettingsInternalError struct {
+	Code string
+	Err  error
+}
+
+func (e *SettingsInternalError) Error() string { return e.Err.Error() }
+func (e *SettingsInternalError) Unwrap() error { return e.Err }
+
 // SettingsService manages persistence for user settings/preferences
 type SettingsService struct{}
 
@@ -66,6 +76,12 @@ func init() {
 			Metadata:        response.Metadata,
 		}, nil
 	})
+	// Ensure latest schema (adds explicit custom sound columns if they don't exist)
+	if database.DB != nil {
+		if err := database.DB.AutoMigrate(&models.UserSettings{}); err != nil {
+			log.Printf("warning: AutoMigrate UserSettings failed: %v", err)
+		}
+	}
 }
 
 // UpdateUserSettingsInput describes the fields that can be updated for a user's settings
@@ -316,6 +332,15 @@ func (s *SettingsService) applyNotificationSoundSelection(updates map[string]int
 }
 
 func (s *SettingsService) resolveCustomSoundMetadata(settings *models.UserSettings, incoming map[string]interface{}) (url, filename, key string) {
+	// Prefer explicit columns (added Oct 2025) falling back to legacy JSON preferences
+	if settings != nil {
+		url = strings.TrimSpace(settings.CustomSoundURL)
+		filename = strings.TrimSpace(settings.CustomSoundFilename)
+		key = strings.TrimSpace(settings.CustomSoundS3Key)
+	}
+	if url != "" || filename != "" || key != "" { // already resolved via new columns
+		return
+	}
 	combined := decodeAdditionalPreferences(settings.AdditionalPreferences)
 	if incoming != nil {
 		combined = mergePreferenceMaps(combined, incoming)
@@ -428,6 +453,13 @@ func (s *SettingsService) BuildSettingsResponse(settings *models.UserSettings) S
 
 	notificationSoundFile := s.notificationSoundFile(settings)
 	customURL, customFilename := s.customSoundInfo(settings)
+	// If explicit columns present, override legacy extracted values
+	if strings.TrimSpace(settings.CustomSoundURL) != "" {
+		customURL = settings.CustomSoundURL
+	}
+	if strings.TrimSpace(settings.CustomSoundFilename) != "" {
+		customFilename = settings.CustomSoundFilename
+	}
 
 	dto := SettingsDTO{
 		UserID:                   settings.UserID,
@@ -485,37 +517,41 @@ func (s *SettingsService) UploadCustomSound(user *models.User, fileHeader *multi
 
 	storageService, err := storage.NewStorageService()
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize storage service: %w", err)
+		return nil, &SettingsInternalError{Code: "S3_INIT_FAILED", Err: fmt.Errorf("failed to initialize storage service: %w", err)}
 	}
 
 	oldURL, _, _ := s.resolveCustomSoundMetadata(settings, nil)
 
 	uploadedURL, err := storageService.UploadFile(fileHeader, "custom-notification-sounds", user.ID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to upload custom sound: %w", err)
+		return nil, &SettingsInternalError{Code: "S3_UPLOAD_FAILED", Err: fmt.Errorf("failed to upload custom sound: %w", err)}
 	}
 
+	// Update both new explicit columns and legacy JSON preferences for backward compatibility
+	newFilename := filepath.Base(fileHeader.Filename)
+	newKey := extractS3KeyFromURL(uploadedURL)
 	prefs := decodeAdditionalPreferences(settings.AdditionalPreferences)
 	prefs[preferenceKeyCustomSoundURL] = uploadedURL
-	prefs[preferenceKeyCustomSoundFilename] = filepath.Base(fileHeader.Filename)
-	prefs[preferenceKeyCustomSoundKey] = extractS3KeyFromURL(uploadedURL)
-
+	prefs[preferenceKeyCustomSoundFilename] = newFilename
+	prefs[preferenceKeyCustomSoundKey] = newKey
 	buffer, err := json.Marshal(prefs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to encode custom sound preferences: %w", err)
+		return nil, &SettingsInternalError{Code: "PREFS_ENCODE_FAILED", Err: fmt.Errorf("failed to encode custom sound preferences: %w", err)}
 	}
-
 	updates := map[string]interface{}{
 		"additional_preferences": models.JSON(buffer),
 		"notification_sound":     soundIDCustom,
+		"custom_sound_url":       uploadedURL,
+		"custom_sound_filename":  newFilename,
+		"custom_sound_s3_key":    newKey,
 	}
 
 	if err := database.DB.Model(settings).Updates(updates).Error; err != nil {
-		return nil, err
+		return nil, &SettingsInternalError{Code: "DB_UPDATE_FAILED", Err: err}
 	}
 
 	if err := database.DB.First(settings, settings.ID).Error; err != nil {
-		return nil, err
+		return nil, &SettingsInternalError{Code: "DB_RELOAD_FAILED", Err: err}
 	}
 	s.ensurePreferencesInitialized(settings)
 

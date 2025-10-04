@@ -3,8 +3,8 @@ package services
 import (
 	"fmt"
 	"log"
-	"time"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -323,6 +323,15 @@ func (ns *NotificationScheduler) CheckMissedSessions() {
 	now := time.Now()
 	pastTime := now.Add(-30 * time.Minute) // ตรวจสอบ sessions ที่ผ่านมา 30 นาที
 
+	// อัพเดท sessions ที่ได้รับการยืนยันแล้วและจบไปเป็น completed
+	if tx := ns.db.Model(&models.Schedule_Sessions{}).
+		Where("end_time IS NOT NULL AND end_time <= ? AND status = ?", now, "confirmed").
+		Update("status", "completed"); tx.Error != nil {
+		fmt.Printf("Error marking confirmed sessions as completed: %v\n", tx.Error)
+	} else if tx.RowsAffected > 0 {
+		fmt.Printf("Marked %d confirmed sessions as completed\n", tx.RowsAffected)
+	}
+
 	var sessions []models.Schedule_Sessions
 	err := ns.db.Where("start_time < ? AND status = ?", pastTime, "scheduled").
 		Preload("Schedule").
@@ -412,9 +421,9 @@ func (ns *NotificationScheduler) sendDailyLineGroupReminders() {
 	db := database.DB
 	//tomorrow := time.Now().AddDate(0, 0, 1)
 	loc, _ := time.LoadLocation("Asia/Bangkok")
-    now := time.Now().In(loc)	
-    startOfTomorrow := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, loc)
-    endOfTomorrow := startOfTomorrow.Add(24*time.Hour - time.Nanosecond)
+	now := time.Now().In(loc)
+	startOfTomorrow := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, loc)
+	endOfTomorrow := startOfTomorrow.Add(24*time.Hour - time.Nanosecond)
 
 	var sessions []models.Schedule_Sessions
 	if err := db.

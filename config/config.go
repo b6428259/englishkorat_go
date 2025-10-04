@@ -37,6 +37,7 @@ type Config struct {
 	AWSAccessKeyID     string
 	AWSSecretAccessKey string
 	S3BucketName       string
+	S3UseACL           bool // whether to attach legacy ACL (public-read) on upload
 
 	// Server
 	IP     string
@@ -161,6 +162,7 @@ func LoadConfig() {
 		AWSAccessKeyID:     getVal("AWS_ACCESS_KEY_ID", ""),
 		AWSSecretAccessKey: getVal("AWS_SECRET_ACCESS_KEY", ""),
 		S3BucketName:       getVal("S3_BUCKET_NAME", "englishkorat-storage"),
+		S3UseACL:           strings.ToLower(getVal("S3_USE_ACL", "false")) == "true",
 
 		IP:     getVal("IP", "0.0.0.0"),
 		Port:   getVal("PORT", "3000"),

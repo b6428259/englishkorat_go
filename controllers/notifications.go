@@ -431,3 +431,189 @@ func (nc *NotificationController) GetNotificationStats(c *fiber.Ctx) error {
 		"stats": stats,
 	})
 }
+
+// TestWebSocketPopup sends test popup notifications with various scenarios
+// GET /api/notifications/test/popup?user_id=X&case=scenario
+func (nc *NotificationController) TestWebSocketPopup(c *fiber.Ctx) error {
+	if config.AppConfig == nil || config.AppConfig.AppEnv == "production" {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Test endpoints disabled in production"})
+	}
+
+	// Get target user
+	userIDParam := c.Query("user_id")
+	var targetUserID uint
+	if userIDParam != "" {
+		id, err := strconv.ParseUint(userIDParam, 10, 32)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid user_id"})
+		}
+		targetUserID = uint(id)
+	} else {
+		// Default to current user
+		user, err := middleware.GetCurrentUser(c)
+		if err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "User not found or specify user_id"})
+		}
+		targetUserID = user.ID
+	}
+
+	// Verify target user exists
+	var targetUser models.User
+	if err := database.DB.First(&targetUser, targetUserID).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Target user not found"})
+	}
+
+	testCase := c.Query("case", "basic")
+	service := notifsvc.NewService()
+
+	// Map numeric shortcuts
+	shortcuts := map[string]string{
+		"1": "basic", "2": "schedule", "3": "warning", "4": "success",
+		"5": "error", "6": "normal_only", "7": "daily_reminder", "8": "payment_due",
+		"9": "makeup_session", "10": "absence_approved", "11": "custom_sound", "12": "long_message",
+		"13": "invitation",
+	}
+	if mapped, ok := shortcuts[testCase]; ok {
+		testCase = mapped
+	}
+
+	// Send notification directly in each case (cannot store queuedNotification type)
+	var desc string
+
+	switch testCase {
+	case "basic":
+		desc = "Basic info popup"
+		if err := service.EnqueueOrCreate([]uint{targetUserID}, notifsvc.QueuedWithData(
+			"Test Notification", "ทดสอบการแจ้งเตือน",
+			"This is a basic test popup notification", "นี่คือการแจ้งเตือนแบบป๊อปอัพทดสอบพื้นฐาน",
+			"info", fiber.Map{"test_case": "basic", "timestamp": time.Now().Unix()}, "popup", "normal")); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send test notification"})
+		}
+	case "schedule":
+		desc = "Schedule reminder (15 min)"
+		if err := service.EnqueueOrCreate([]uint{targetUserID}, notifsvc.QueuedWithData(
+			"Upcoming Class", "คาบเรียนใกล้ถึงแล้ว",
+			"Your class starts in 15 minutes", "คาบเรียนของคุณจะเริ่มใน 15 นาที", "info",
+			fiber.Map{"action": "open_schedule", "schedule_id": 999, "session_id": 8888,
+				"starts_at": time.Now().Add(15 * time.Minute).Format(time.RFC3339), "action_label": "View Schedule"},
+			"popup", "normal")); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send test notification"})
+		}
+	case "warning":
+		desc = "Schedule conflict warning"
+		if err := service.EnqueueOrCreate([]uint{targetUserID}, notifsvc.QueuedWithData(
+			"Schedule Conflict", "ตารางซ้อนกัน",
+			"You have two sessions overlapping. Please resolve.", "คุณมี 2 คาบเรียนเวลาทับกัน กรุณาแก้ไข", "warning",
+			fiber.Map{"action": "resolve_conflict", "conflicts": []fiber.Map{
+				{"session_id": 1001, "starts_at": time.Now().Add(24 * time.Hour).Format(time.RFC3339)},
+				{"session_id": 1005, "starts_at": time.Now().Add(24*time.Hour + 30*time.Minute).Format(time.RFC3339)}}},
+			"popup", "normal")); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send test notification"})
+		}
+	case "success":
+		desc = "Success message"
+		if err := service.EnqueueOrCreate([]uint{targetUserID}, notifsvc.QueuedWithData(
+			"Schedule Approved", "อนุมัติตารางแล้ว",
+			"Your schedule #A-1044 has been approved successfully", "ตาราง #A-1044 ของคุณได้รับการอนุมัติแล้ว",
+			"success", fiber.Map{"schedule_code": "A-1044", "approved_by": "Admin"}, "popup", "normal")); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send test notification"})
+		}
+	case "error":
+		desc = "Error notification"
+		if err := service.EnqueueOrCreate([]uint{targetUserID}, notifsvc.QueuedWithData(
+			"Upload Failed", "อัปโหลดไฟล์ล้มเหลว",
+			"Failed to upload file. Please try again.", "ไม่สามารถอัปโหลดไฟล์ได้ กรุณาลองอีกครั้ง",
+			"error", fiber.Map{"retry": true, "error_code": "FILE_TOO_LARGE"}, "popup", "normal")); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send test notification"})
+		}
+	case "normal_only":
+		desc = "Normal channel only (no popup)"
+		if err := service.EnqueueOrCreate([]uint{targetUserID}, notifsvc.QueuedWithData(
+			"Background Sync Complete", "ซิงค์ข้อมูลเสร็จแล้ว",
+			"Data has been synchronized successfully.", "ข้อมูลถูกซิงค์เรียบร้อยแล้ว", "success", nil, "normal")); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send test notification"})
+		}
+	case "daily_reminder":
+		desc = "Daily schedule reminder"
+		if err := service.EnqueueOrCreate([]uint{targetUserID}, notifsvc.QueuedWithData(
+			"Daily Schedule Reminder", "เตือนตารางเรียนประจำวัน",
+			"You have 3 classes scheduled for today. First class starts at 09:00 AM.",
+			"คุณมีคาบเรียน 3 คาบวันนี้ คาบแรกเริ่มเวลา 09:00 น.", "info",
+			fiber.Map{"action": "view_daily_schedule", "date": time.Now().Format("2006-01-02"), "session_count": 3, "first_session": "09:00"},
+			"popup", "normal")); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send test notification"})
+		}
+	case "payment_due":
+		desc = "Payment due warning"
+		if err := service.EnqueueOrCreate([]uint{targetUserID}, notifsvc.QueuedWithData(
+			"Payment Due Soon", "ใกล้ถึงกำหนดชำระเงิน",
+			"Your payment is due in 3 days. Amount: ฿5,000", "กำหนดชำระเงินของคุณใกล้ถึงแล้ว (อีก 3 วัน) จำนวน ฿5,000",
+			"warning", fiber.Map{"action": "view_invoice", "invoice_id": "INV-2025-001", "amount": 5000,
+				"due_date": time.Now().Add(3 * 24 * time.Hour).Format("2006-01-02")},
+			"popup", "normal")); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send test notification"})
+		}
+	case "makeup_session":
+		desc = "Makeup session created"
+		if err := service.EnqueueOrCreate([]uint{targetUserID}, notifsvc.QueuedWithData(
+			"Makeup Session Scheduled", "นัดชดเชยคาบเรียน",
+			"A makeup session has been scheduled for 2025-10-05 at 14:00",
+			"มีการนัดชดเชยคาบเรียนในวันที่ 5 ต.ค. 2025 เวลา 14:00 น.", "info",
+			fiber.Map{"action": "open_schedule", "schedule_id": 888, "session_id": 7777,
+				"session_type": "makeup", "scheduled_at": "2025-10-05T14:00:00Z"},
+			"popup", "normal")); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send test notification"})
+		}
+	case "absence_approved":
+		desc = "Absence request approved"
+		if err := service.EnqueueOrCreate([]uint{targetUserID}, notifsvc.QueuedWithData(
+			"Absence Approved", "อนุมัติการลา",
+			"Your absence request for 2025-10-10 has been approved.",
+			"คำขอลาของคุณสำหรับวันที่ 10 ต.ค. 2025 ได้รับการอนุมัติแล้ว",
+			"success", fiber.Map{"absence_id": 555, "absence_date": "2025-10-10"}, "popup", "normal")); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send test notification"})
+		}
+	case "custom_sound":
+		desc = "Test custom sound (ensure user uploaded custom sound first)"
+		if err := service.EnqueueOrCreate([]uint{targetUserID}, notifsvc.QueuedWithData(
+			"Custom Sound Test", "ทดสอบเสียงแจ้งเตือนแบบกำหนดเอง",
+			"This notification should play your custom sound if enabled.",
+			"การแจ้งเตือนนี้จะเล่นเสียงที่คุณกำหนดเอง (ถ้าเปิดใช้งาน)",
+			"info", fiber.Map{"test": "custom_sound"}, "popup", "normal")); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send test notification"})
+		}
+	case "long_message":
+		desc = "Long message test"
+		if err := service.EnqueueOrCreate([]uint{targetUserID}, notifsvc.QueuedWithData(
+			"Important Announcement", "ประกาศสำคัญ",
+			"This is a long message to test how the popup handles extensive content. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.",
+			"นี่คือข้อความยาวเพื่อทดสอบว่าป๊อปอัพจัดการกับเนื้อหาจำนวนมากได้อย่างไร ข้อความนี้มีหลายบรรทัดและมีรายละเอียดมากเพื่อทดสอบการแสดงผล และตรวจสอบว่าอินเทอร์เฟซรองรับได้ดีหรือไม่",
+			"info", fiber.Map{"message_length": "long"}, "popup", "normal")); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send test notification"})
+		}
+	case "invitation":
+		desc = "Schedule invitation (requires response)"
+		if err := service.EnqueueOrCreate([]uint{targetUserID}, notifsvc.QueuedWithData(
+			"Schedule Invitation", "คำเชิญเข้าร่วมตาราง",
+			"You have been invited to join a schedule. Please confirm your participation.",
+			"คุณได้รับคำเชิญให้เข้าร่วมตาราง กรุณายืนยันการเข้าร่วม",
+			"info", fiber.Map{
+				"action": "respond_invitation", "schedule_id": 777, "invited_by": "Admin",
+				"schedule_date":     time.Now().Add(48 * time.Hour).Format("2006-01-02"),
+				"requires_response": true, "action_label": "Respond to Invitation"},
+			"popup", "normal")); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send test notification"})
+		}
+	default:
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Unknown test case", "available_cases": []string{
+				"basic (1)", "schedule (2)", "warning (3)", "success (4)", "error (5)", "normal_only (6)",
+				"daily_reminder (7)", "payment_due (8)", "makeup_session (9)", "absence_approved (10)",
+				"custom_sound (11)", "long_message (12)", "invitation (13)"}})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Test notification sent via WebSocket", "target_user": targetUserID,
+		"username": targetUser.Username, "test_case": testCase, "description": desc,
+		"timestamp": time.Now().Format(time.RFC3339)})
+}

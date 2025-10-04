@@ -60,13 +60,15 @@ func (j JSON) IsNull() bool {
 // Branch model
 type Branch struct {
 	BaseModel
-	NameEn  string `json:"name_en" gorm:"size:255;not null"`
-	NameTh  string `json:"name_th" gorm:"size:255;not null"`
-	Code    string `json:"code" gorm:"size:50;not null;uniqueIndex"`
-	Address string `json:"address" gorm:"size:500"`
-	Phone   string `json:"phone" gorm:"size:20"`
-	Type    string `json:"type" gorm:"size:50;not null;default:'offline';type:enum('offline','online')"` // offline, online
-	Active  bool   `json:"active" gorm:"default:true"`
+	NameEn    string    `json:"name_en" gorm:"size:255;not null"`
+	NameTh    string    `json:"name_th" gorm:"size:255;not null"`
+	Code      string    `json:"code" gorm:"size:50;not null;uniqueIndex"`
+	Address   string    `json:"address" gorm:"size:500"`
+	Phone     string    `json:"phone" gorm:"size:20"`
+	Type      string    `json:"type" gorm:"size:50;not null;default:'offline';type:enum('offline','online')"` // offline, online
+	Active    bool      `json:"active" gorm:"default:true"`
+	OpenTime  time.Time `json:"open_time" gorm:"type:time;not null;default:'08:00:00'"`
+	CloseTime time.Time `json:"close_time" gorm:"type:time;not null;default:'21:00:00'"`
 
 	// Relationships
 	Users    []User    `json:"users,omitempty" gorm:"foreignKey:BranchID"`
@@ -501,7 +503,11 @@ type UserSettings struct {
 	EnablePhoneNotifications bool   `json:"enable_phone_notifications" gorm:"default:false"`
 	EnableInAppNotifications bool   `json:"enable_in_app_notifications" gorm:"default:true"`
 	AdditionalPreferences    JSON   `json:"additional_preferences" gorm:"type:json"`
-	User                     User   `json:"user" gorm:"foreignKey:UserID"`
+	// Explicit custom sound columns (added Oct 2025) for easier querying / indexing
+	CustomSoundURL      string `json:"custom_sound_url" gorm:"size:500"`
+	CustomSoundFilename string `json:"custom_sound_filename" gorm:"size:255"`
+	CustomSoundS3Key    string `json:"custom_sound_s3_key" gorm:"size:500"`
+	User                User   `json:"user" gorm:"foreignKey:UserID"`
 }
 
 // NotificationSoundOption describes a built-in notification sound that clients can use.

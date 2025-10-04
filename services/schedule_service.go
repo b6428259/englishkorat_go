@@ -1,9 +1,14 @@
 package services
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"englishkorat_go/database"
@@ -15,10 +20,278 @@ import (
 type HolidayResponse struct {
 	VCALENDAR []struct {
 		VEVENT []struct {
-			DTStart string `json:"DTSTART"`
-			Summary string `json:"SUMMARY"`
+			DTStart      string `json:"DTSTART"`
+			DTStartValue string `json:"DTSTART;VALUE=DATE,omitempty"`
+			Summary      string `json:"SUMMARY"`
 		} `json:"VEVENT"`
 	} `json:"VCALENDAR"`
+}
+
+// HolidayInfo contains holiday date and name
+type HolidayInfo struct {
+	Date time.Time
+	Name string
+}
+
+// SessionSlot defines a weekday/time slot for generated sessions
+type SessionSlot struct {
+	Weekday     time.Weekday
+	StartHour   int
+	StartMinute int
+}
+
+// BranchHours represents operating hours for a branch in minutes from midnight
+type BranchHours struct {
+	OpenMinutes  int
+	CloseMinutes int
+}
+
+var myHoraHTTPClient = &http.Client{
+	Timeout: 15 * time.Second,
+}
+
+func fetchMyHoraJSONWithNames(year int) (map[string]string, error) {
+	buddhistYear := year + 543
+	url := fmt.Sprintf("https://www.myhora.com/calendar/ical/holiday.aspx?%d.json", buddhistYear)
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create holiday request for year %d: %w", year, err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; EnglishKorat/1.0; +https://englishkorat.com)")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("Referer", fmt.Sprintf("https://www.myhora.com/calendar/%d.aspx", buddhistYear))
+
+	resp, err := myHoraHTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch holidays for year %d: %w", year, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read holiday response for year %d: %w", year, err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to fetch holidays for year %d: status %d", year, resp.StatusCode)
+	}
+
+	trimmed := strings.TrimSpace(string(body))
+	if trimmed == "" {
+		return nil, nil
+	}
+	if strings.HasPrefix(trimmed, "<") {
+		return nil, fmt.Errorf("failed to decode holiday response for year %d: unexpected html content", year)
+	}
+
+	var holidayResp HolidayResponse
+	if err := json.Unmarshal(body, &holidayResp); err != nil {
+		return nil, fmt.Errorf("failed to decode holiday response for year %d: %w", year, err)
+	}
+
+	return extractHolidaysFromResponse(holidayResp), nil
+}
+
+func fetchMyHoraJSON(year int) ([]time.Time, error) {
+	buddhistYear := year + 543
+	url := fmt.Sprintf("https://www.myhora.com/calendar/ical/holiday.aspx?%d.json", buddhistYear)
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create holiday request for year %d: %w", year, err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; EnglishKorat/1.0; +https://englishkorat.com)")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("Referer", fmt.Sprintf("https://www.myhora.com/calendar/%d.aspx", buddhistYear))
+
+	resp, err := myHoraHTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch holidays for year %d: %w", year, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read holiday response for year %d: %w", year, err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to fetch holidays for year %d: status %d", year, resp.StatusCode)
+	}
+
+	trimmed := strings.TrimSpace(string(body))
+	if trimmed == "" {
+		return nil, nil
+	}
+	if strings.HasPrefix(trimmed, "<") {
+		return nil, fmt.Errorf("failed to decode holiday response for year %d: unexpected html content", year)
+	}
+
+	var holidayResp HolidayResponse
+	if err := json.Unmarshal(body, &holidayResp); err != nil {
+		return nil, fmt.Errorf("failed to decode holiday response for year %d: %w", year, err)
+	}
+
+	holidayMap := extractHolidaysFromResponse(holidayResp)
+	result := make([]time.Time, 0, len(holidayMap))
+	for dateStr := range holidayMap {
+		if date, err := time.Parse("2006-01-02", dateStr); err == nil {
+			result = append(result, date)
+		}
+	}
+	return result, nil
+}
+
+func fetchMyHoraICSWithNames(year int) (map[string]string, error) {
+	buddhistYear := year + 543
+	url := fmt.Sprintf("https://www.myhora.com/calendar/ical/holiday.aspx?%d.ics", buddhistYear)
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create holiday fallback request for year %d: %w", year, err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; EnglishKorat/1.0; +https://englishkorat.com)")
+	req.Header.Set("Accept", "text/calendar, text/plain, */*")
+	req.Header.Set("Referer", fmt.Sprintf("https://www.myhora.com/calendar/%d.aspx", buddhistYear))
+
+	resp, err := myHoraHTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch fallback holidays for year %d: %w", year, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to fetch fallback holidays for year %d: status %d", year, resp.StatusCode)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	holidayMap := make(map[string]string)
+	var currentDate string
+	var currentSummary string
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		if strings.HasPrefix(line, "DTSTART") {
+			colonIdx := strings.Index(line, ":")
+			if colonIdx == -1 {
+				continue
+			}
+			value := strings.TrimSpace(line[colonIdx+1:])
+			if len(value) > 8 {
+				value = value[:8]
+			}
+			if len(value) == 8 {
+				if date, err := time.Parse("20060102", value); err == nil {
+					currentDate = date.Format("2006-01-02")
+				}
+			}
+		} else if strings.HasPrefix(line, "SUMMARY:") {
+			currentSummary = strings.TrimSpace(strings.TrimPrefix(line, "SUMMARY:"))
+		} else if line == "END:VEVENT" {
+			if currentDate != "" && currentSummary != "" {
+				if _, exists := holidayMap[currentDate]; !exists {
+					holidayMap[currentDate] = currentSummary
+				}
+			}
+			currentDate = ""
+			currentSummary = ""
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("failed to parse fallback holidays for year %d: %w", year, err)
+	}
+
+	return holidayMap, nil
+}
+
+func fetchMyHoraICS(year int) ([]time.Time, error) {
+	buddhistYear := year + 543
+	url := fmt.Sprintf("https://www.myhora.com/calendar/ical/holiday.aspx?%d.ics", buddhistYear)
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create holiday fallback request for year %d: %w", year, err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; EnglishKorat/1.0; +https://englishkorat.com)")
+	req.Header.Set("Accept", "text/calendar, text/plain, */*")
+	req.Header.Set("Referer", fmt.Sprintf("https://www.myhora.com/calendar/%d.aspx", buddhistYear))
+
+	resp, err := myHoraHTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch fallback holidays for year %d: %w", year, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to fetch fallback holidays for year %d: status %d", year, resp.StatusCode)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	seen := make(map[string]struct{})
+	holidayDates := make([]time.Time, 0)
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "DTSTART") {
+			continue
+		}
+		colonIdx := strings.Index(line, ":")
+		if colonIdx == -1 {
+			continue
+		}
+		value := strings.TrimSpace(line[colonIdx+1:])
+		if len(value) > 8 {
+			value = value[:8]
+		}
+		if len(value) != 8 {
+			continue
+		}
+		if date, err := time.Parse("20060102", value); err == nil {
+			key := date.Format("2006-01-02")
+			if _, exists := seen[key]; !exists {
+				seen[key] = struct{}{}
+				holidayDates = append(holidayDates, date)
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("failed to parse fallback holidays for year %d: %w", year, err)
+	}
+
+	return holidayDates, nil
+}
+
+func extractHolidaysFromResponse(resp HolidayResponse) map[string]string {
+	holidayMap := make(map[string]string)
+
+	for _, calendar := range resp.VCALENDAR {
+		for _, event := range calendar.VEVENT {
+			dateStr := strings.TrimSpace(event.DTStart)
+			if dateStr == "" {
+				dateStr = strings.TrimSpace(event.DTStartValue)
+			}
+			if dateStr == "" {
+				continue
+			}
+			if len(dateStr) > 8 {
+				dateStr = dateStr[:8]
+			}
+			date, err := time.Parse("20060102", dateStr)
+			if err != nil {
+				continue
+			}
+			key := date.Format("2006-01-02")
+			if _, exists := holidayMap[key]; !exists {
+				holidayMap[key] = strings.TrimSpace(event.Summary)
+			}
+		}
+	}
+
+	return holidayMap
 }
 
 // CheckRoomConflict ตรวจสอบการชนของห้องสำหรับ schedule ใหม่
@@ -253,74 +526,386 @@ func GenerateScheduleSessions(schedule models.Schedules, sessionStartTime string
 	return sessions, nil
 }
 
-// GetThaiHolidays ดึงวันหยุดไทยจาก API
-func GetThaiHolidays(startYear, endYear int) ([]time.Time, error) {
-	var allHolidays []time.Time
+// GenerateScheduleSessionsWithSlots generates sessions based on explicit weekday/time slots.
+// It validates branch operating hours before creating sessions.
+func GenerateScheduleSessionsWithSlots(schedule models.Schedules, slots []SessionSlot, totalSessions, hoursPerSession int, hours BranchHours) ([]models.Schedule_Sessions, error) {
+	if len(slots) == 0 {
+		return nil, fmt.Errorf("session slots are required to generate schedule sessions")
+	}
+	if totalSessions <= 0 {
+		return nil, fmt.Errorf("total sessions must be greater than zero")
+	}
+	if hoursPerSession <= 0 {
+		return nil, fmt.Errorf("hours per session must be greater than zero")
+	}
+	if hours.CloseMinutes <= hours.OpenMinutes {
+		return nil, fmt.Errorf("branch operating hours are invalid")
+	}
 
-	for year := startYear; year <= endYear; year++ {
-		// แปลงปี ค.ศ. เป็น พ.ศ.
-		buddhistYear := year + 543
-		url := fmt.Sprintf("https://www.myhora.com/calendar/ical/holiday.aspx?%d.json", buddhistYear)
-
-		resp, err := http.Get(url)
-		if err != nil {
-			return nil, fmt.Errorf("failed to fetch holidays for year %d: %v", year, err)
+	// Validate each slot against branch hours
+	for _, slot := range slots {
+		if slot.Weekday < time.Sunday || slot.Weekday > time.Saturday {
+			return nil, fmt.Errorf("invalid weekday provided for session slot")
 		}
-		defer resp.Body.Close()
-
-		var holidayResp HolidayResponse
-		if err := json.NewDecoder(resp.Body).Decode(&holidayResp); err != nil {
-			return nil, fmt.Errorf("failed to decode holiday response for year %d: %v", year, err)
+		startMinutes := slot.StartHour*60 + slot.StartMinute
+		endMinutes := startMinutes + hoursPerSession*60
+		if startMinutes < hours.OpenMinutes || endMinutes > hours.CloseMinutes {
+			return nil, fmt.Errorf("session starting at %02d:%02d on %s is outside branch hours", slot.StartHour, slot.StartMinute, slot.Weekday.String())
 		}
+	}
 
-		// แปลงวันหยุดเป็น time.Time
-		for _, calendar := range holidayResp.VCALENDAR {
-			for _, event := range calendar.VEVENT {
-				if dateStr := event.DTStart; dateStr != "" {
-					if date, err := time.Parse("20060102", dateStr); err == nil {
-						allHolidays = append(allHolidays, date)
-					}
+	// Group slots by weekday and sort by start time
+	slotsByDay := make(map[time.Weekday][]SessionSlot)
+	for _, slot := range slots {
+		slotsByDay[slot.Weekday] = append(slotsByDay[slot.Weekday], slot)
+	}
+	for day := range slotsByDay {
+		sort.SliceStable(slotsByDay[day], func(i, j int) bool {
+			a := slotsByDay[day][i]
+			b := slotsByDay[day][j]
+			if a.StartHour == b.StartHour {
+				return a.StartMinute < b.StartMinute
+			}
+			return a.StartHour < b.StartHour
+		})
+	}
+
+	bangkokLoc, _ := time.LoadLocation("Asia/Bangkok")
+	startInLoc := schedule.Start_date.In(bangkokLoc)
+	startDate := time.Date(startInLoc.Year(), startInLoc.Month(), startInLoc.Day(), 0, 0, 0, 0, bangkokLoc)
+
+	sessions := make([]models.Schedule_Sessions, 0, totalSessions)
+	current := startDate
+	maxDays := 366 * 2 // guard against runaway loops (2 years)
+	processedDays := 0
+
+	for len(sessions) < totalSessions && processedDays <= maxDays {
+		daySlots := slotsByDay[current.Weekday()]
+		if len(daySlots) > 0 {
+			for _, slot := range daySlots {
+				if len(sessions) >= totalSessions {
+					break
 				}
+
+				sessionStart := time.Date(current.Year(), current.Month(), current.Day(), slot.StartHour, slot.StartMinute, 0, 0, bangkokLoc)
+				sessionEnd := sessionStart.Add(time.Duration(hoursPerSession) * time.Hour)
+				sessionDate := time.Date(current.Year(), current.Month(), current.Day(), 0, 0, 0, 0, bangkokLoc)
+
+				// Additional safety: ensure session end still within same day bounds
+				if sessionEnd.Sub(sessionStart) != time.Duration(hoursPerSession)*time.Hour {
+					return nil, fmt.Errorf("failed to compute session duration for %s", sessionStart.Format(time.RFC3339))
+				}
+
+				sd := sessionDate
+				st := sessionStart
+				et := sessionEnd
+
+				sessionNumber := len(sessions) + 1
+				weeksFromStart := int(sd.Sub(startDate).Hours() / (24 * 7))
+				if weeksFromStart < 0 {
+					weeksFromStart = 0
+				}
+
+				sessions = append(sessions, models.Schedule_Sessions{
+					Session_date:   &sd,
+					Start_time:     &st,
+					End_time:       &et,
+					Session_number: sessionNumber,
+					Week_number:    weeksFromStart + 1,
+					Status:         "scheduled",
+				})
 			}
 		}
+
+		current = current.AddDate(0, 0, 1)
+		processedDays++
+	}
+
+	if len(sessions) != totalSessions {
+		return nil, fmt.Errorf("unable to generate the requested number of sessions (%d/%d) within allowed timeframe", len(sessions), totalSessions)
+	}
+
+	return sessions, nil
+}
+
+// ReindexSessions sorts sessions chronologically and recalculates session and week numbers relative to startDate.
+func ReindexSessions(sessions []models.Schedule_Sessions, startDate time.Time) {
+	if len(sessions) == 0 {
+		return
+	}
+
+	bangkokLoc, _ := time.LoadLocation("Asia/Bangkok")
+	startInLoc := startDate.In(bangkokLoc)
+	normalizedStart := time.Date(startInLoc.Year(), startInLoc.Month(), startInLoc.Day(), 0, 0, 0, 0, bangkokLoc)
+
+	sort.SliceStable(sessions, func(i, j int) bool {
+		var leftDate, rightDate time.Time
+		if sessions[i].Session_date != nil {
+			leftDate = sessions[i].Session_date.In(bangkokLoc)
+		}
+		if sessions[j].Session_date != nil {
+			rightDate = sessions[j].Session_date.In(bangkokLoc)
+		}
+
+		if !leftDate.Equal(rightDate) {
+			return leftDate.Before(rightDate)
+		}
+
+		var leftStart, rightStart time.Time
+		if sessions[i].Start_time != nil {
+			leftStart = sessions[i].Start_time.In(bangkokLoc)
+		}
+		if sessions[j].Start_time != nil {
+			rightStart = sessions[j].Start_time.In(bangkokLoc)
+		}
+
+		return leftStart.Before(rightStart)
+	})
+
+	for idx := range sessions {
+		sessions[idx].Session_number = idx + 1
+		if sessions[idx].Session_date != nil {
+			sessionDate := sessions[idx].Session_date.In(bangkokLoc)
+			normalized := time.Date(sessionDate.Year(), sessionDate.Month(), sessionDate.Day(), 0, 0, 0, 0, bangkokLoc)
+			weeks := int(normalized.Sub(normalizedStart).Hours() / (24 * 7))
+			if weeks < 0 {
+				weeks = 0
+			}
+			sessions[idx].Week_number = weeks + 1
+		} else {
+			sessions[idx].Week_number = 1
+		}
+	}
+}
+
+// GetThaiHolidaysWithNames ดึงวันหยุดไทยพร้อมชื่อจาก API
+func GetThaiHolidaysWithNames(startYear, endYear int) (map[string]string, error) {
+	holidayNames := make(map[string]string)
+	var errorSummaries []string
+
+	for year := startYear; year <= endYear; year++ {
+		var yearHolidays map[string]string
+		var yearErrors []string
+
+		if holidays, err := fetchMyHoraJSONWithNames(year); err != nil {
+			yearErrors = append(yearErrors, err.Error())
+		} else {
+			yearHolidays = holidays
+		}
+
+		if len(yearHolidays) == 0 {
+			if holidays, err := fetchMyHoraICSWithNames(year); err != nil {
+				yearErrors = append(yearErrors, err.Error())
+			} else {
+				yearHolidays = holidays
+			}
+		}
+
+		if len(yearHolidays) == 0 {
+			if len(yearErrors) > 0 {
+				errorSummaries = append(errorSummaries, fmt.Sprintf("%d: %s", year, strings.Join(yearErrors, " | ")))
+			}
+			continue
+		}
+
+		for dateStr, name := range yearHolidays {
+			if _, exists := holidayNames[dateStr]; !exists {
+				holidayNames[dateStr] = name
+			}
+		}
+	}
+
+	if len(errorSummaries) > 0 {
+		if len(holidayNames) == 0 {
+			return nil, fmt.Errorf("failed to fetch holidays: %s", strings.Join(errorSummaries, "; "))
+		}
+		log.Printf("warning: partial holiday fetch failures: %s", strings.Join(errorSummaries, "; "))
+	}
+
+	return holidayNames, nil
+}
+
+// GetThaiHolidays ดึงวันหยุดไทยจาก API
+func GetThaiHolidays(startYear, endYear int) ([]time.Time, error) {
+	seen := make(map[string]struct{})
+	var allHolidays []time.Time
+	var errorSummaries []string
+
+	for year := startYear; year <= endYear; year++ {
+		var yearHolidays []time.Time
+		var yearErrors []string
+
+		if holidays, err := fetchMyHoraJSON(year); err != nil {
+			yearErrors = append(yearErrors, err.Error())
+		} else {
+			yearHolidays = append(yearHolidays, holidays...)
+		}
+
+		if len(yearHolidays) == 0 {
+			if holidays, err := fetchMyHoraICS(year); err != nil {
+				yearErrors = append(yearErrors, err.Error())
+			} else {
+				yearHolidays = append(yearHolidays, holidays...)
+			}
+		}
+
+		if len(yearHolidays) == 0 {
+			if len(yearErrors) > 0 {
+				errorSummaries = append(errorSummaries, fmt.Sprintf("%d: %s", year, strings.Join(yearErrors, " | ")))
+			}
+			continue
+		}
+
+		for _, date := range yearHolidays {
+			key := date.Format("2006-01-02")
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			allHolidays = append(allHolidays, date)
+		}
+	}
+
+	sort.Slice(allHolidays, func(i, j int) bool {
+		return allHolidays[i].Before(allHolidays[j])
+	})
+
+	if len(errorSummaries) > 0 {
+		if len(allHolidays) == 0 {
+			return nil, fmt.Errorf("failed to fetch holidays: %s", strings.Join(errorSummaries, "; "))
+		}
+		log.Printf("warning: partial holiday fetch failures: %s", strings.Join(errorSummaries, "; "))
 	}
 
 	return allHolidays, nil
 }
 
-// RescheduleSessions ปรับ sessions ที่ตรงกับวันหยุด
+// RescheduleSessions ปรับ sessions ที่ตรงกับวันหยุด โดยยกเลิกและไปต่อท้าย
 func RescheduleSessions(sessions []models.Schedule_Sessions, holidays []time.Time) []models.Schedule_Sessions {
+	if len(sessions) == 0 {
+		return sessions
+	}
+
 	holidayMap := make(map[string]bool)
 	for _, holiday := range holidays {
 		holidayMap[holiday.Format("2006-01-02")] = true
 	}
 
+	// สกัด pattern ของวันที่ใช้ในตาราง (weekdays ที่ใช้)
+	weekdayPattern := make(map[time.Weekday]bool)
+	timeByWeekday := make(map[time.Weekday][]time.Time) // เก็บเวลาเริ่ม-สิ้นสุดตาม weekday
+
+	for _, session := range sessions {
+		if session.Session_date != nil {
+			weekday := session.Session_date.Weekday()
+			weekdayPattern[weekday] = true
+
+			// เก็บเวลาของแต่ละ weekday (กรณีมีหลายช่วงเวลาในวันเดียวกัน)
+			if session.Start_time != nil && session.End_time != nil {
+				timeByWeekday[weekday] = append(timeByWeekday[weekday], *session.Start_time, *session.End_time)
+			}
+		}
+	}
+
+	// แยก sessions ที่ตรงวันหยุดออกมา
 	var rescheduledSessions []models.Schedule_Sessions
+	var postponedSessions []models.Schedule_Sessions
 
 	for _, session := range sessions {
 		sessionDate := session.Session_date.Format("2006-01-02")
-
 		if holidayMap[sessionDate] {
-			// หาวันถัดไปที่ไม่ใช่วันหยุด
-			newDate := session.Session_date.AddDate(0, 0, 1)
-			for holidayMap[newDate.Format("2006-01-02")] {
-				newDate = newDate.AddDate(0, 0, 1)
-			}
+			postponedSessions = append(postponedSessions, session)
+		} else {
+			rescheduledSessions = append(rescheduledSessions, session)
+		}
+	}
 
-			// อัพเดทวันที่ session
-			// Update session date/time pointers
-			nd := newDate
-			session.Session_date = &nd
-			ss := time.Date(newDate.Year(), newDate.Month(), newDate.Day(),
-				session.Start_time.Hour(), session.Start_time.Minute(), 0, 0, newDate.Location())
-			se := time.Date(newDate.Year(), newDate.Month(), newDate.Day(),
-				session.End_time.Hour(), session.End_time.Minute(), 0, 0, newDate.Location())
-			session.Start_time = &ss
-			session.End_time = &se
-			session.Notes = "Rescheduled due to holiday"
+	// ถ้าไม่มี sessions ที่ต้องเลื่อน ก็ return เลย
+	if len(postponedSessions) == 0 {
+		return rescheduledSessions
+	}
+
+	// หาวันสุดท้ายที่มี session
+	if len(rescheduledSessions) == 0 {
+		// ถ้าทุก session เป็นวันหยุดหมด ให้เริ่มจากวันแรกของ schedule
+		rescheduledSessions = postponedSessions
+		postponedSessions = nil
+	}
+
+	if len(postponedSessions) > 0 {
+		lastSession := rescheduledSessions[len(rescheduledSessions)-1]
+		currentDate := *lastSession.Session_date
+		bangkokLoc := currentDate.Location()
+
+		// เรียง weekdays ตาม pattern ที่ใช้
+		var sortedWeekdays []time.Weekday
+		for wd := time.Sunday; wd <= time.Saturday; wd++ {
+			if weekdayPattern[wd] {
+				sortedWeekdays = append(sortedWeekdays, wd)
+			}
 		}
 
-		rescheduledSessions = append(rescheduledSessions, session)
+		// สำหรับแต่ละ postponed session หาวันถัดไปที่ตรง pattern และไม่ใช่วันหยุด
+		for _, session := range postponedSessions {
+			originalWeekday := session.Session_date.Weekday()
+
+			// หาวัน weekday ถัดไปที่ตรงกับ originalWeekday และไม่ตรงกับวันหยุด
+			found := false
+			searchDate := currentDate.AddDate(0, 0, 1)
+			maxSearch := 60 // ป้องกัน infinite loop
+
+			for attempts := 0; attempts < maxSearch && !found; attempts++ {
+				if searchDate.Weekday() == originalWeekday && !holidayMap[searchDate.Format("2006-01-02")] {
+					found = true
+
+					// อัพเดทวันที่ session
+					newDate := searchDate
+					session.Session_date = &newDate
+
+					newStart := time.Date(newDate.Year(), newDate.Month(), newDate.Day(),
+						session.Start_time.Hour(), session.Start_time.Minute(), 0, 0, bangkokLoc)
+					newEnd := time.Date(newDate.Year(), newDate.Month(), newDate.Day(),
+						session.End_time.Hour(), session.End_time.Minute(), 0, 0, bangkokLoc)
+
+					session.Start_time = &newStart
+					session.End_time = &newEnd
+					session.Notes = "Rescheduled due to holiday"
+
+					rescheduledSessions = append(rescheduledSessions, session)
+					currentDate = newDate
+				} else {
+					searchDate = searchDate.AddDate(0, 0, 1)
+				}
+			}
+
+			if !found {
+				// Fallback: ถ้าหาไม่เจอ ให้ใช้วันถัดไปที่ไม่ใช่วันหยุด
+				searchDate = currentDate.AddDate(0, 0, 1)
+				for holidayMap[searchDate.Format("2006-01-02")] {
+					searchDate = searchDate.AddDate(0, 0, 1)
+				}
+
+				newDate := searchDate
+				session.Session_date = &newDate
+
+				newStart := time.Date(newDate.Year(), newDate.Month(), newDate.Day(),
+					session.Start_time.Hour(), session.Start_time.Minute(), 0, 0, bangkokLoc)
+				newEnd := time.Date(newDate.Year(), newDate.Month(), newDate.Day(),
+					session.End_time.Hour(), session.End_time.Minute(), 0, 0, bangkokLoc)
+
+				session.Start_time = &newStart
+				session.End_time = &newEnd
+				session.Notes = "Rescheduled due to holiday"
+
+				rescheduledSessions = append(rescheduledSessions, session)
+				currentDate = newDate
+			}
+		}
+	}
+
+	// Reindex session numbers เรียงลำดับใหม่ 1, 2, 3...
+	for i := range rescheduledSessions {
+		rescheduledSessions[i].Session_number = i + 1
 	}
 
 	return rescheduledSessions

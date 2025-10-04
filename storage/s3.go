@@ -94,13 +94,16 @@ func (s *StorageService) UploadFile(file *multipart.FileHeader, folder string, u
 	)
 
 	// Upload to S3
-	_, err = s.s3Client.PutObject(&s3.PutObjectInput{
+	putInput := &s3.PutObjectInput{
 		Bucket:      aws.String(s.bucket),
 		Key:         aws.String(filename),
 		Body:        bytes.NewReader(finalBytes),
 		ContentType: aws.String(s.getContentType(finalExtension)),
-		ACL:         aws.String("public-read"),
-	})
+	}
+	if config.AppConfig != nil && config.AppConfig.S3UseACL {
+		putInput.ACL = aws.String("public-read")
+	}
+	_, err = s.s3Client.PutObject(putInput)
 
 	if err != nil {
 		return "", fmt.Errorf("failed to upload to S3: %v", err)

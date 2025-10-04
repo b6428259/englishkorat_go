@@ -92,7 +92,7 @@ func (gc *GroupController) GetGroups(c *fiber.Ctx) error {
 		Preload("Members.Student")
 
 	if courseID != "" {
-		query = query.Where("course_id = ?", courseID)
+		query = query.Where("groups.course_id = ?", courseID)
 	}
 	// Filter by branch via the joined course
 	if branchID != "" {
@@ -100,22 +100,47 @@ func (gc *GroupController) GetGroups(c *fiber.Ctx) error {
 		query = query.Joins("JOIN courses ON courses.id = groups.course_id").Where("courses.branch_id = ?", branchID)
 	}
 	if status != "" {
-		query = query.Where("status = ?", status)
+		query = query.Where("groups.status = ?", status)
 	}
 	if paymentStatus != "" {
-		query = query.Where("payment_status = ?", paymentStatus)
+		query = query.Where("groups.payment_status = ?", paymentStatus)
 	}
 
-	// Pagination
+	// Pagination - if neither page nor per_page is specified, return all results
+	pageQuery := c.Query("page")
+	perPageQuery := c.Query("per_page")
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to count groups"})
+	}
+
+	var groups []models.Group
+
+	// If no pagination parameters provided, return all results
+	if pageQuery == "" && perPageQuery == "" {
+		if err := query.Find(&groups).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to fetch groups",
+			})
+		}
+		dtos := utils.ToGroupDTOs(groups)
+		return c.JSON(fiber.Map{
+			"groups": dtos,
+			"total":  total,
+		})
+	}
+
+	// Apply pagination
 	page := 1
 	perPage := 20
-	if p := c.Query("page"); p != "" {
-		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+	if pageQuery != "" {
+		if v, err := strconv.Atoi(pageQuery); err == nil && v > 0 {
 			page = v
 		}
 	}
-	if pp := c.Query("per_page"); pp != "" {
-		if v, err := strconv.Atoi(pp); err == nil && v > 0 {
+	if perPageQuery != "" {
+		if v, err := strconv.Atoi(perPageQuery); err == nil && v > 0 {
 			perPage = v
 		}
 	}
@@ -123,19 +148,13 @@ func (gc *GroupController) GetGroups(c *fiber.Ctx) error {
 		perPage = 100
 	}
 
-	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to count groups"})
-	}
-
 	offset := (page - 1) * perPage
-	var groups []models.Group
 	if err := query.Limit(perPage).Offset(offset).Find(&groups).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to fetch groups",
 		})
 	}
-	// Map to DTOs
+
 	dtos := utils.ToGroupDTOs(groups)
 	totalPages := 0
 	if total > 0 {

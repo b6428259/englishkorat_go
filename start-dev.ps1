@@ -12,6 +12,7 @@ $EC2_KEY_PATH = "./EKLS.pem"
 $LOCAL_DB_PORT = "3307"
 $LOCAL_REDIS_PORT = "6380"
 $REMOTE_DB_PORT = "3306"
+# Default remote redis port (can be overridden by REDIS_PORT in .env)
 $REMOTE_REDIS_PORT = "6379"
 $RDS_HOST = "ekorat-db.c96wcau48ea0.ap-southeast-1.rds.amazonaws.com"
 
@@ -22,6 +23,9 @@ if (Test-Path ".env") {
     $REDIS_HOST = ($envLines | Where-Object { $_ -match "^REDIS_HOST=" }) -replace "^REDIS_HOST=", ""
     if (-not $DB_HOST) { $DB_HOST = "localhost" }
     if (-not $REDIS_HOST) { $REDIS_HOST = "localhost" }
+    # If .env contains REDIS_PORT, use it as the remote redis port (common in UAT/setup)
+    $envRedisPort = ($envLines | Where-Object { $_ -match "^REDIS_PORT=" }) -replace "^REDIS_PORT=", ""
+    if ($envRedisPort -and $envRedisPort -ne "") { $REMOTE_REDIS_PORT = $envRedisPort }
 } else {
     $DB_HOST = "localhost"
     $REDIS_HOST = "localhost"
@@ -165,38 +169,49 @@ function Test-RedisPing {
         }
 
         $stream = $client.GetStream()
-        $writer = New-Object System.IO.StreamWriter($stream)
-        $writer.NewLine = "`r`n"
-        $writer.AutoFlush = $true
 
-        # If password provided, send AUTH first
-        if ($Password -and $Password -ne "") {
-            $authCmd = "*2`r`n$4`r`nAUTH`r`n$($Password.Length)`r`n$Password`r`n"
-            $bytes = [System.Text.Encoding]::ASCII.GetBytes($authCmd)
-            $stream.Write($bytes, 0, $bytes.Length)
-            Start-Sleep -Milliseconds 200
+        function Write-RespArray {
+            param([string[]]$items)
+            $builder = New-Object System.Text.StringBuilder
+            [void]$builder.Append("*" + $items.Count + "`r`n")
+            foreach ($i in $items) {
+                $bytesLen = ([System.Text.Encoding]::UTF8.GetByteCount($i))
+                [void]$builder.Append("$" + $bytesLen + "`r`n" + $i + "`r`n")
+            }
+            $payload = [System.Text.Encoding]::UTF8.GetBytes($builder.ToString())
+            $stream.Write($payload, 0, $payload.Length)
         }
 
-        # Send PING
-        $pingCmd = "*1`r`n$4`r`nPING`r`n"
-        $bytes = [System.Text.Encoding]::ASCII.GetBytes($pingCmd)
-        $stream.Write($bytes, 0, $bytes.Length)
+        function Read-RespLine {
+            param([int]$waitMs=500)
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            $accum = New-Object System.IO.MemoryStream
+            while ($sw.ElapsedMilliseconds -lt $waitMs -and (-not $stream.DataAvailable)) { Start-Sleep -Milliseconds 25 }
+            if (-not $stream.DataAvailable) { return $null }
+            $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8, $false, 1024, $true)
+            return $reader.ReadLine()
+        }
 
-        # Read response
-        $reader = New-Object System.IO.StreamReader($stream)
-        Start-Sleep -Milliseconds 200
-        $resp = ""
-        if ($stream.DataAvailable) { $resp = $reader.ReadLine() }
+        $authOK = $true
+        if ($Password -and $Password -ne "") {
+            Write-RespArray @('AUTH', $Password)
+            $authResp = Read-RespLine 800
+            if ($authResp -and $authResp -notmatch '^\+OK') {
+                if ($authResp -match '^-ERR') {
+                    Write-Host "AUTH response: $authResp" -ForegroundColor Yellow
+                }
+            }
+        }
 
-        $reader.Close()
-        $writer.Close()
+        Write-RespArray @('PING')
+        $pingResp = Read-RespLine 800
         $client.Close()
 
-        if ($resp -and $resp -match "^\+PONG") {
+        if ($pingResp -and $pingResp -match '^\+PONG') {
             Write-Host "Redis PING successful (PONG received)" -ForegroundColor Green
             return $true
         } else {
-            Write-Host "Redis PING failed (no PONG). Response: $resp" -ForegroundColor Red
+            Write-Host "Redis PING failed (no PONG). Response: $pingResp" -ForegroundColor Red
             return $false
         }
     } catch {
@@ -206,6 +221,28 @@ function Test-RedisPing {
 }
 
 $redisSuccess = Test-RedisPing "localhost" $LOCAL_REDIS_PORT $REDIS_PASSWORD
+
+# If Redis failed, try a single fallback: restart the tunnel forwarding to remote port 6379 and retry once
+if (-not $redisSuccess -and $REMOTE_REDIS_PORT -ne "6379") {
+    Write-Host "Attempting fallback: restarting SSH tunnel to forward remote port 6379 and retrying Redis PING..." -ForegroundColor Yellow
+    try {
+        if ($sshProc -and -not $sshProc.HasExited) { Stop-Process -Id $sshProc.Id -Force }
+    } catch { }
+
+    $sshArgsFallback = @(
+        "-N"
+        "-L", "$LOCAL_DB_PORT`:$RDS_HOST`:$REMOTE_DB_PORT"
+        "-L", "$LOCAL_REDIS_PORT`:$REDIS_HOST`:6379"
+        "-o", "ExitOnForwardFailure=yes"
+        "-i", $EC2_KEY_PATH
+        "$EC2_USER@$EC2_HOST"
+    )
+    Write-Host "SSH Command (fallback): ssh $($sshArgsFallback -join ' ')" -ForegroundColor Blue
+    $sshProc = Start-Process -FilePath "ssh" -ArgumentList $sshArgsFallback -NoNewWindow -PassThru
+    Start-Sleep -Seconds 3
+    $redisSuccess = Test-RedisPing "localhost" $LOCAL_REDIS_PORT $REDIS_PASSWORD
+    if ($redisSuccess) { Write-Host "Fallback succeeded: Redis reachable via remote port 6379" -ForegroundColor Green }
+}
 
 Write-Host "`nConnection Summary:" -ForegroundColor Cyan
 Write-Host "======================" -ForegroundColor Cyan
@@ -224,12 +261,30 @@ if ($redisSuccess) {
 
 if ($dbSuccess -and $redisSuccess) {
     Write-Host "`nAll services are connected! You can now run your Go application." -ForegroundColor Green
-    Write-Host "Starting: go run main.go (press Ctrl+C to stop)" -ForegroundColor Yellow
+    if ($env:FAST_DEV -eq "1") {
+        Write-Host "FAST_DEV enabled: will build once and run the built binary (press Ctrl+C to stop)" -ForegroundColor Yellow
+    } else {
+        Write-Host "Starting application (building binary then running) (press Ctrl+C to stop)" -ForegroundColor Yellow
+    }
     
         try {
-            # To speed up local development, skip automatic migrations/schema checks.
-            # The application honors the SKIP_MIGRATE environment variable (set to "true").
-            go run main.go
+            # To speed up local development, you can enable FAST_DEV mode by setting environment variable FAST_DEV=1
+            # FAST_DEV will set SKIP_MIGRATE=true to skip migrations and use a pre-built binary instead of `go run`.
+            if ($env:FAST_DEV -eq "1") {
+                Write-Host "FAST_DEV enabled: setting SKIP_MIGRATE=true and building binary for faster startup..." -ForegroundColor Yellow
+                $env:SKIP_MIGRATE = "true"
+            }
+
+            # Build binary once to avoid repeated compile overhead of `go run`
+            Write-Host "Building binary (fast startup)..." -ForegroundColor Yellow
+            $build = Start-Process -FilePath "go" -ArgumentList @("build", "-o", "englishkorat_go.exe", "main.go") -NoNewWindow -Wait -PassThru
+            if ($build.ExitCode -ne 0) {
+                Write-Host "Build failed (exit code $($build.ExitCode)). Falling back to 'go run main.go'" -ForegroundColor Red
+                go run main.go
+            } else {
+                Write-Host "Starting built binary: .\englishkorat_go.exe (press Ctrl+C to stop)" -ForegroundColor Green
+                & .\englishkorat_go.exe
+            }
         }
     finally {
         Write-Host "`nStopping SSH tunnel..." -ForegroundColor Yellow
